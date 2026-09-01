@@ -78,6 +78,31 @@ private struct GeneralSettings: View {
                     )
                 }
                 Toggle("Stop on silence", isOn: silenceEnabledBinding)
+                if state.config.recording.silenceTimeoutSeconds != nil {
+                    LabeledContent("Silence timeout") {
+                        Stepper(
+                            String(format: "%.1fs", silenceTimeoutBinding.wrappedValue),
+                            value: silenceTimeoutBinding,
+                            in: 0.5...10,
+                            step: 0.5
+                        )
+                    }
+                    LabeledContent("Silence threshold") {
+                        Stepper(
+                            "\(Int(silenceThresholdBinding.wrappedValue)) dBFS",
+                            value: silenceThresholdBinding,
+                            in: -80...(-20),
+                            step: 1
+                        )
+                    }
+                    Text(
+                        "Recording stops once the input stays below the threshold for the "
+                            + "timeout. A less negative threshold (e.g. -35) treats quieter "
+                            + "trailing sound as speech, so it takes longer to count as silence."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
             }
 
             Section {
@@ -145,6 +170,21 @@ private struct GeneralSettings: View {
                 state.save(config)
             }
         )
+    }
+
+    private var silenceTimeoutBinding: Binding<Double> {
+        Binding(
+            get: { state.config.recording.silenceTimeoutSeconds ?? 2.0 },
+            set: { newValue in
+                var config = state.config
+                config.recording.silenceTimeoutSeconds = newValue
+                state.save(config)
+            }
+        )
+    }
+
+    private var silenceThresholdBinding: Binding<Double> {
+        binding(\.recording.silenceThresholdDB)
     }
 
     private func binding<Value>(_ keyPath: WritableKeyPath<VoxConfig, Value>) -> Binding<Value> {
@@ -361,7 +401,17 @@ private struct OutputSettings: View {
 
             Section("History") {
                 Toggle("Keep a local transcript history", isOn: historyBinding)
-                LabeledContent("Entries kept", value: "\(state.config.output.sessionHistoryLimit)")
+                LabeledContent("Entries kept") {
+                    Stepper(
+                        "\(state.config.output.sessionHistoryLimit)",
+                        value: sessionHistoryLimitBinding,
+                        in: 10...500,
+                        step: 10
+                    )
+                }
+                Text("Stored at ~/Library/Application Support/Vox/sessions.json, newest first.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Button("Clear history now") { state.clearHistory() }
                     .disabled(state.history.isEmpty)
             }
@@ -400,6 +450,17 @@ private struct OutputSettings: View {
             set: { newValue in
                 var config = state.config
                 config.output.keepSessionHistory = newValue
+                state.save(config)
+            }
+        )
+    }
+
+    private var sessionHistoryLimitBinding: Binding<Int> {
+        Binding(
+            get: { state.config.output.sessionHistoryLimit },
+            set: { newValue in
+                var config = state.config
+                config.output.sessionHistoryLimit = newValue
                 state.save(config)
             }
         )
