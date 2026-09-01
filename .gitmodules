@@ -1,3 +1,9 @@
 [submodule "vendor/whisper.cpp"]
 	path = vendor/whisper.cpp
 	url = https://github.com/ggerganov/whisper.cpp
+	# build-whisper.sh installs into vendor/whisper.cpp/install/ and
+	# whisper.cpp's own CMakeLists.txt regenerates
+	# bindings/javascript/package.json in-place on every configure. Neither
+	# is meant to be committed; `ignore = dirty` keeps both out of `git
+	# status` without forking upstream's tracked .gitignore.
+	ignore = dirty

@@ -1,0 +1,412 @@
+import AVFoundation
+import CoreAudio
+import Foundation
+import VoxKit
+
+public struct CaptureOutput: Sendable {
+    public let audio: PCMAudio
+    public let stopReason: StopReason
+}
+
+/// Microphone capture that hands back exactly what the transcriber needs.
+///
+/// The input tap is converted to 16 kHz mono float in-flight by
+/// `AVAudioConverter`, so there is no intermediate file and no ffmpeg process
+/// on the hot path.
+public final class AudioCapture: NSObject {
+    public enum Event: Sendable {
+        /// Instantaneous input level in dBFS, for the menu bar meter.
+        case level(Double)
+    }
+
+    private let config: RecordingConfig
+    private let engine = AVAudioEngine()
+    private let state = CaptureState()
+    /// A day, well under what `UInt64` nanoseconds can hold, so an absurd
+    /// `--timeout` is a config error rather than an overflow trap.
+    static let maxDeadlineSeconds: Double = 86_400
+    private var converter: AVAudioConverter?
+
+    public init(config: RecordingConfig) {
+        self.config = config
+        super.init()
+    }
+
+    /// Whether access is already granted, without prompting.
+    public static var hasPermission: Bool {
+        AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+    }
+
+    /// Asks for microphone access, prompting on first run.
+    public static func requestPermission() async -> Bool {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            return true
+        case .notDetermined:
+            return await AVCaptureDevice.requestAccess(for: .audio)
+        case .denied, .restricted:
+            return false
+        @unknown default:
+            return false
+        }
+    }
+
+    /// Stops an in-flight recording. Safe to call from any thread; this is what
+    /// a hotkey release or a second toggle press calls.
+    public func stop() {
+        state.requestStop(reason: .manual)
+    }
+
+    public var isRecording: Bool { state.isRunning }
+
+    /// Records until silence, the deadline, or `stop()`.
+    ///
+    /// `timeout` overrides `RecordingConfig.maxDurationSeconds` so an agent can
+    /// bound how long it waits without editing config.
+    public func record(
+        timeout: Double? = nil,
+        onEvent: (@Sendable (Event) -> Void)? = nil
+    ) async throws -> CaptureOutput {
+        guard await AudioCapture.requestPermission() else {
+            throw VoxError(
+                code: .permission,
+                message: "Microphone access was denied",
+                detail: "Grant access in System Settings → Privacy & Security → Microphone."
+            )
+        }
+        guard state.arm() else {
+            throw VoxError(code: .microphone, message: "A recording is already in progress")
+        }
+        // A hotkey released while the device is still being configured has to
+        // land somewhere; from `arm()` on, `stop()` is remembered.
+        var began = false
+        defer { if !began { state.disarm() } }
+
+        let inputNode = engine.inputNode
+        // Before `inputFormat` is read: the format belongs to whichever device
+        // the HAL unit is pointed at.
+        if let uid = config.inputDeviceUID {
+            try Self.selectInputDevice(uid: uid, on: inputNode)
+        }
+        let inputFormat = inputNode.inputFormat(forBus: 0)
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+            throw VoxError(
+                code: .microphone,
+                message: "No usable audio input device was found",
+                detail: "Input format reported \(inputFormat.sampleRate) Hz / \(inputFormat.channelCount) ch."
+            )
+        }
+        guard
+            let targetFormat = AVAudioFormat(
+                commonFormat: .pcmFormatFloat32,
+                sampleRate: PCMAudio.sampleRate,
+                channels: 1,
+                interleaved: false
+            ),
+            let converter = AVAudioConverter(from: inputFormat, to: targetFormat)
+        else {
+            throw VoxError(
+                code: .audio,
+                message: "Could not build a 16 kHz mono converter for the input device",
+                detail: "Input format: \(inputFormat)"
+            )
+        }
+        self.converter = converter
+
+        // `--timeout` and the configured cap are the same deadline mechanically
+        // but not the same event to an agent reading `stop_reason`.
+        let deadline = timeout ?? config.maxDurationSeconds
+        guard deadline.isFinite, deadline > 0, deadline <= Self.maxDeadlineSeconds else {
+            throw VoxError.config(
+                "Recording deadline must be between 0 and \(Int(Self.maxDeadlineSeconds)) seconds",
+                detail: "Got \(deadline)."
+            )
+        }
+        let deadlineReason: StopReason = timeout == nil ? .maxDuration : .timeout
+        let silenceTimeout = config.silenceTimeoutSeconds
+        let silenceThreshold = config.silenceThresholdDB
+
+        guard state.begin() else {
+            throw VoxError(
+                code: .cancelled,
+                message: "Recording was stopped before the microphone opened"
+            )
+        }
+        began = true
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
+            guard let self, let converted = self.convert(buffer, using: converter, to: targetFormat) else {
+                return
+            }
+            let level = PCMAudio.levelDB(of: converted[...])
+            onEvent?(.level(level))
+            self.state.append(
+                samples: converted,
+                level: level,
+                silenceThreshold: silenceThreshold,
+                silenceTimeout: silenceTimeout,
+                deadline: deadline,
+                deadlineReason: deadlineReason
+            )
+        }
+
+        do {
+            engine.prepare()
+            try engine.start()
+        } catch {
+            inputNode.removeTap(onBus: 0)
+            state.end()
+            throw VoxError(
+                code: .microphone,
+                message: "Could not start the audio engine",
+                detail: error.localizedDescription
+            )
+        }
+
+        // The deadline cannot be enforced from the tap alone: a device that
+        // stops delivering buffers (unplugged, hung driver) would otherwise
+        // leave the caller waiting forever.
+        let captureState = state
+        let watchdog = Task.detached {
+            try await Task.sleep(nanoseconds: UInt64(deadline * 1_000_000_000))
+            captureState.requestStop(reason: deadlineReason)
+        }
+
+        let reason = await state.waitForStop()
+        watchdog.cancel()
+        engine.stop()
+        inputNode.removeTap(onBus: 0)
+        let samples = state.drain()
+        state.end()
+
+        return CaptureOutput(audio: PCMAudio(samples: samples), stopReason: reason)
+    }
+
+    private func convert(
+        _ buffer: AVAudioPCMBuffer,
+        using converter: AVAudioConverter,
+        to format: AVAudioFormat
+    ) -> [Float]? {
+        let ratio = format.sampleRate / buffer.format.sampleRate
+        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 1024
+        guard let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { return nil }
+
+        var consumed = false
+        var conversionError: NSError?
+        converter.convert(to: output, error: &conversionError) { _, statusPointer in
+            if consumed {
+                statusPointer.pointee = .noDataNow
+                return nil
+            }
+            consumed = true
+            statusPointer.pointee = .haveData
+            return buffer
+        }
+        guard conversionError == nil, let channel = output.floatChannelData?[0] else { return nil }
+        return Array(UnsafeBufferPointer(start: channel, count: Int(output.frameLength)))
+    }
+
+    private static func selectInputDevice(uid: String, on inputNode: AVAudioInputNode) throws {
+        guard let deviceID = deviceID(forUID: uid) else {
+            throw VoxError(
+                code: .microphone,
+                message: "No audio input device with UID '\(uid)'",
+                detail: "Clear it with `vox config set recording.input_device_uid default`."
+            )
+        }
+        guard let unit = inputNode.audioUnit else {
+            throw VoxError(code: .microphone, message: "The audio input node exposed no audio unit")
+        }
+        var id = deviceID
+        let status = AudioUnitSetProperty(
+            unit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &id,
+            UInt32(MemoryLayout<AudioDeviceID>.size)
+        )
+        guard status == noErr else {
+            throw VoxError(
+                code: .microphone,
+                message: "Could not select input device '\(uid)'",
+                detail: "AudioUnitSetProperty returned \(status)."
+            )
+        }
+    }
+
+    private static func deviceID(forUID uid: String) -> AudioDeviceID? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size: UInt32 = 0
+        guard
+            AudioObjectGetPropertyDataSize(
+                AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size) == noErr
+        else { return nil }
+        var devices = [AudioDeviceID](
+            repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
+        guard
+            AudioObjectGetPropertyData(
+                AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &devices) == noErr
+        else { return nil }
+
+        for device in devices {
+            var uidAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyDeviceUID,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var value: CFString?
+            var valueSize = UInt32(MemoryLayout<CFString?>.size)
+            guard
+                AudioObjectGetPropertyData(device, &uidAddress, 0, nil, &valueSize, &value) == noErr,
+                let value, value as String == uid
+            else { continue }
+            return device
+        }
+        return nil
+    }
+}
+
+/// All mutable capture state lives here so the audio tap (a real-time thread)
+/// and the awaiting caller never touch the same memory unguarded.
+private final class CaptureState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var samples: [Float] = []
+    private var running = false
+    /// True from the moment a caller commits to recording until that recording
+    /// ends, so a stop during device setup is not dropped on the floor.
+    private var armed = false
+    private var pendingStop = false
+    private var stopReason: StopReason?
+    private var continuation: CheckedContinuation<StopReason, Never>?
+    private var startedAt = Date()
+    private var lastVoiceAt: Date?
+
+    var isRunning: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return running
+    }
+
+    /// Claims the capture for one recording. False when one is already under
+    /// way, which is the caller's "already recording" error.
+    func arm() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !armed, !running else { return false }
+        armed = true
+        pendingStop = false
+        return true
+    }
+
+    func disarm() {
+        lock.lock()
+        defer { lock.unlock() }
+        armed = false
+        pendingStop = false
+    }
+
+    /// Opens the recording, unless a stop arrived while it was being set up.
+    /// Deciding this under the same lock as `requestStop` is what closes the
+    /// window between "prepared" and "running".
+    func begin() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !pendingStop else {
+            armed = false
+            return false
+        }
+        samples = []
+        running = true
+        stopReason = nil
+        startedAt = Date()
+        lastVoiceAt = nil
+        return true
+    }
+
+    func end() {
+        lock.lock()
+        defer { lock.unlock() }
+        running = false
+        armed = false
+        pendingStop = false
+        continuation = nil
+    }
+
+    func append(
+        samples newSamples: [Float],
+        level: Double,
+        silenceThreshold: Double,
+        silenceTimeout: Double?,
+        deadline: Double,
+        deadlineReason: StopReason
+    ) {
+        lock.lock()
+        guard running, stopReason == nil else {
+            lock.unlock()
+            return
+        }
+        samples.append(contentsOf: newSamples)
+        let now = Date()
+        if level > silenceThreshold {
+            lastVoiceAt = now
+        }
+        var reason: StopReason?
+        if now.timeIntervalSince(startedAt) >= deadline {
+            reason = deadlineReason
+        } else if let silenceTimeout, let lastVoiceAt,
+            now.timeIntervalSince(lastVoiceAt) >= silenceTimeout
+        {
+            // Only after speech has been heard: otherwise a slow start would
+            // cut the recording off before the user began talking.
+            reason = .silence
+        }
+        let resumed = reason.flatMap { finishLocked(reason: $0) }
+        lock.unlock()
+        resumed?()
+    }
+
+    func requestStop(reason: StopReason) {
+        lock.lock()
+        if armed, !running {
+            pendingStop = true
+        }
+        let resumed = finishLocked(reason: reason)
+        lock.unlock()
+        resumed?()
+    }
+
+    func waitForStop() async -> StopReason {
+        await withCheckedContinuation { (continuation: CheckedContinuation<StopReason, Never>) in
+            lock.lock()
+            if let reason = stopReason {
+                lock.unlock()
+                continuation.resume(returning: reason)
+                return
+            }
+            self.continuation = continuation
+            lock.unlock()
+        }
+    }
+
+    func drain() -> [Float] {
+        lock.lock()
+        defer { lock.unlock() }
+        let result = samples
+        samples = []
+        return result
+    }
+
+    /// Must be called with the lock held; returns a closure to run after
+    /// unlocking so a continuation never resumes while holding the lock.
+    private func finishLocked(reason: StopReason) -> (() -> Void)? {
+        guard running, stopReason == nil else { return nil }
+        stopReason = reason
+        guard let continuation else { return nil }
+        self.continuation = nil
+        return { continuation.resume(returning: reason) }
+    }
+}
