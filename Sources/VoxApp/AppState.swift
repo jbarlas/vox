@@ -197,7 +197,16 @@ final class AppState: ObservableObject {
             }
             _ = try router.deliver(result: result, destination: destination)
             lastTranscript = result.transcript
-            status = .idle
+            if let modeError = result.modeError {
+                // Whisper still succeeded and its output was already
+                // delivered above (as `result.transcript`, filled in from the
+                // raw transcript) — surface the mode failure without
+                // pretending the LLM step actually ran.
+                status = .failed("\(modeError.message) — copied the raw transcript instead")
+                feedback.playError()
+            } else {
+                status = .idle
+            }
             refreshHistory()
         } catch {
             status = .failed(voxMessage(for: error))

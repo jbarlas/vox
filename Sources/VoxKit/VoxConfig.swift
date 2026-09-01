@@ -295,6 +295,10 @@ public struct LLMConfig: Codable, Sendable, Equatable {
     public var apiKeyEnvVar: String?
     public var temperature: Double
     public var timeoutSeconds: Double
+    /// `nil` (the default) omits `max_tokens` from the request entirely, so
+    /// the provider's own default/context-window ceiling applies instead of
+    /// an arbitrary cap here. A reasoning model can burn through a small cap
+    /// on chain-of-thought alone and never reach its actual answer.
     public var maxOutputTokens: Int?
 
     public init(
@@ -303,7 +307,7 @@ public struct LLMConfig: Codable, Sendable, Equatable {
         apiKeyEnvVar: String? = "LITELLM_API_KEY",
         temperature: Double = 0.2,
         timeoutSeconds: Double = 60,
-        maxOutputTokens: Int? = 1024
+        maxOutputTokens: Int? = nil
     ) {
         self.baseURL = baseURL
         self.model = model

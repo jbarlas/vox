@@ -88,7 +88,8 @@ public struct ModeDefinition: Codable, Sendable, Equatable {
             and smooth disfluent grammar, but otherwise keep the speaker's own wording, \
             structure, and every specific detail — names, numbers, dates, and facts — \
             exactly as spoken. Do not summarize, condense, or invent anything the speaker \
-            did not say.
+            did not say, including a greeting or sign-off the speaker didn't dictate — add \
+            one only if the speaker actually opened or closed with one.
             Output only the message body, with no subject line or commentary.
             """
     )

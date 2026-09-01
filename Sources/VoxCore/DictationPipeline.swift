@@ -135,7 +135,19 @@ public final class DictationPipeline {
 
         onStage?(.processingMode(mode.name))
         let modeClock = Date()
-        let modeResult = try await modeRunner.run(transcript: transcription.text, mode: mode)
+        // Whisper has already succeeded by this point, so a failure here
+        // (an LLM call, typically) degrades to the raw transcript rather
+        // than losing it — the caller still gets usable output, plus
+        // modeError to know the mode itself didn't run.
+        let modeResult: ModeResult
+        let modeError: VoxError?
+        do {
+            modeResult = try await modeRunner.run(transcript: transcription.text, mode: mode)
+            modeError = nil
+        } catch {
+            modeResult = ModeResult(text: transcription.text, mode: mode.name, kind: mode.kind)
+            modeError = VoxError.wrap(error, code: .llm, message: "Mode '\(mode.name)' failed")
+        }
         timings.modeMs = Self.elapsedMs(since: modeClock)
 
         let finishedAt = Date()
@@ -155,7 +167,8 @@ public final class DictationPipeline {
             stopReason: stopReason,
             startedAt: startedAt,
             finishedAt: finishedAt,
-            timings: timings
+            timings: timings,
+            modeError: modeError
         )
     }
 

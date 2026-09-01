@@ -87,7 +87,9 @@ public struct SessionEntry: Codable, Sendable, Equatable, Identifiable {
             durationMs: result.durationMs,
             audioDurationMs: result.audioDurationMs,
             timings: result.timings,
-            success: true,
+            success: result.modeError == nil,
+            errorCode: result.modeError?.code,
+            errorMessage: result.modeError?.message,
             createdAt: result.finishedAt
         )
     }

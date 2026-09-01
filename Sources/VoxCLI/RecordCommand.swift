@@ -192,8 +192,17 @@ struct RecordRunner {
             destination: destination,
             pretty: options.pretty
         )
-        if !quiet, destination == .clipboard {
-            Stderr.write("Copied \(result.transcript.count) characters to the clipboard.")
+        if !quiet {
+            if let modeError = result.modeError {
+                // whisper.cpp already succeeded; only the mode step (an LLM
+                // call, typically) failed. result.raw_transcript is always
+                // present regardless — this is specifically about what got
+                // copied/pasted/printed as `result.transcript` this time.
+                Stderr.write("\(modeError.message) — \(destination.rawValue) got the raw transcript instead.")
+            }
+            if destination == .clipboard {
+                Stderr.write("Copied \(result.transcript.count) characters to the clipboard.")
+            }
         }
         return rendered
     }

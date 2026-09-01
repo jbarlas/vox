@@ -48,6 +48,11 @@ public struct RecordResult: Codable, Sendable, Equatable {
     public var startedAt: Date
     public var finishedAt: Date
     public var timings: RecordTimings
+    /// Set when the mode step (an LLM call, typically) failed and `transcript`
+    /// was filled in from `rawTranscript` instead — whisper.cpp already
+    /// succeeded by that point, so a mode failure degrades the output rather
+    /// than losing it. `nil` means the mode ran cleanly.
+    public var modeError: VoxError?
 
     public init(
         transcript: String,
@@ -62,7 +67,8 @@ public struct RecordResult: Codable, Sendable, Equatable {
         stopReason: StopReason,
         startedAt: Date,
         finishedAt: Date,
-        timings: RecordTimings
+        timings: RecordTimings,
+        modeError: VoxError? = nil
     ) {
         self.transcript = transcript
         self.rawTranscript = rawTranscript
@@ -77,6 +83,7 @@ public struct RecordResult: Codable, Sendable, Equatable {
         self.startedAt = startedAt
         self.finishedAt = finishedAt
         self.timings = timings
+        self.modeError = modeError
     }
 }
 
