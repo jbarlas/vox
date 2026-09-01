@@ -87,9 +87,7 @@ struct PopoverView: View {
         Binding(
             get: { state.config.defaultMode },
             set: { newValue in
-                var config = state.config
-                config.defaultMode = newValue
-                state.save(config)
+                state.save { $0.defaultMode = newValue }
             }
         )
     }

@@ -149,9 +149,7 @@ private struct GeneralSettings: View {
         Binding(
             get: { state.config.language ?? "auto" },
             set: { newValue in
-                var config = state.config
-                config.language = newValue == "auto" ? nil : newValue
-                state.save(config)
+                state.save { $0.language = newValue == "auto" ? nil : newValue }
             }
         )
     }
@@ -164,9 +162,7 @@ private struct GeneralSettings: View {
         Binding(
             get: { state.config.recording.silenceTimeoutSeconds != nil },
             set: { enabled in
-                var config = state.config
-                config.recording.silenceTimeoutSeconds = enabled ? 2.0 : nil
-                state.save(config)
+                state.save { $0.recording.silenceTimeoutSeconds = enabled ? 2.0 : nil }
             }
         )
     }
@@ -175,9 +171,7 @@ private struct GeneralSettings: View {
         Binding(
             get: { state.config.recording.silenceTimeoutSeconds ?? 2.0 },
             set: { newValue in
-                var config = state.config
-                config.recording.silenceTimeoutSeconds = newValue
-                state.save(config)
+                state.save { $0.recording.silenceTimeoutSeconds = newValue }
             }
         )
     }
@@ -190,9 +184,7 @@ private struct GeneralSettings: View {
         Binding(
             get: { state.config[keyPath: keyPath] },
             set: { newValue in
-                var config = state.config
-                config[keyPath: keyPath] = newValue
-                state.save(config)
+                state.save { $0[keyPath: keyPath] = newValue }
             }
         )
     }
@@ -256,10 +248,10 @@ private struct HotkeyRecorderButton: View {
             warning = "Include at least one modifier key (⌃⌥⇧⌘)."
             return
         }
-        var config = state.config
-        config.hotkey.keyCode = event.keyCode
-        config.hotkey.modifiers = modifiers
-        state.save(config)
+        state.save {
+            $0.hotkey.keyCode = event.keyCode
+            $0.hotkey.modifiers = modifiers
+        }
         stopRecording()
     }
 }
@@ -314,9 +306,7 @@ private struct FeedbackSettings: View {
         Binding(
             get: { state.config[keyPath: keyPath] ?? "" },
             set: { newValue in
-                var config = state.config
-                config[keyPath: keyPath] = newValue.isEmpty ? nil : newValue
-                state.save(config)
+                state.save { $0[keyPath: keyPath] = newValue.isEmpty ? nil : newValue }
             }
         )
     }
@@ -325,9 +315,7 @@ private struct FeedbackSettings: View {
         Binding(
             get: { state.config[keyPath: keyPath] },
             set: { newValue in
-                var config = state.config
-                config[keyPath: keyPath] = newValue
-                state.save(config)
+                state.save { $0[keyPath: keyPath] = newValue }
             }
         )
     }
@@ -360,10 +348,9 @@ private struct VocabularySettings: View {
     }
 
     private func save() {
-        var config = state.config
-        config.vocabulary = VocabInjector.normalize(text.split(separator: "\n").map(String.init))
-        state.save(config)
-        text = config.vocabulary.joined(separator: "\n")
+        let normalized = VocabInjector.normalize(text.split(separator: "\n").map(String.init))
+        state.save { $0.vocabulary = normalized }
+        text = state.config.vocabulary.joined(separator: "\n")
     }
 }
 
@@ -442,16 +429,17 @@ private struct ModeDetail: View {
     }
 
     private func savePrompt() {
-        var config = state.config
-        guard let index = config.modes.firstIndex(where: { $0.name == mode.name }) else { return }
-        config.modes[index].prompt = prompt
-        state.save(config)
+        let name = mode.name
+        let newPrompt = prompt
+        state.save { config in
+            guard let index = config.modes.firstIndex(where: { $0.name == name }) else { return }
+            config.modes[index].prompt = newPrompt
+        }
     }
 
     private func makeDefault() {
-        var config = state.config
-        config.defaultMode = mode.name
-        state.save(config)
+        let name = mode.name
+        state.save { $0.defaultMode = name }
     }
 }
 
@@ -492,20 +480,14 @@ private struct OutputSettings: View {
                     }
                 }
                 HStack {
-                    Text(
-                        "Newest first, with the mode output, the raw whisper.cpp transcript, "
-                            + "and timing/error info for each entry."
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    Spacer()
                     Button("View session data") {
                         NSWorkspace.shared.open(state.sessionsFileURL)
                     }
                     .font(.caption)
-                }
+                    Spacer()
                 Button("Clear history now") { state.clearHistory() }
                     .disabled(state.history.isEmpty)
+                }
             }
 
             Section("LLM modes") {
@@ -529,9 +511,7 @@ private struct OutputSettings: View {
                 }
             },
             set: { newValue in
-                var config = state.config
-                config.output.destination = newValue
-                state.save(config)
+                state.save { $0.output.destination = newValue }
             }
         )
     }
@@ -540,9 +520,7 @@ private struct OutputSettings: View {
         Binding(
             get: { state.config.output.keepSessionHistory },
             set: { newValue in
-                var config = state.config
-                config.output.keepSessionHistory = newValue
-                state.save(config)
+                state.save { $0.output.keepSessionHistory = newValue }
             }
         )
     }
@@ -551,9 +529,7 @@ private struct OutputSettings: View {
         Binding(
             get: { state.config.output.sessionHistoryLimit ?? 50 },
             set: { newValue in
-                var config = state.config
-                config.output.sessionHistoryLimit = newValue
-                state.save(config)
+                state.save { $0.output.sessionHistoryLimit = newValue }
             }
         )
     }
@@ -562,9 +538,7 @@ private struct OutputSettings: View {
         Binding(
             get: { state.config.output.sessionHistoryLimit == nil },
             set: { unlimited in
-                var config = state.config
-                config.output.sessionHistoryLimit = unlimited ? nil : 50
-                state.save(config)
+                state.save { $0.output.sessionHistoryLimit = unlimited ? nil : 50 }
             }
         )
     }

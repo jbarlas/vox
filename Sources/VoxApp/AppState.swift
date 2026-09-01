@@ -68,7 +68,12 @@ final class AppState: ObservableObject {
 
     // MARK: - Config
 
-    func save(_ newConfig: VoxConfig) {
+    /// Applies one change on top of whatever is on disk *right now*, not on
+    /// top of `config` (which can be stale the moment something outside this
+    /// process — `vox config set`, most likely — has touched the file since
+    /// this app last loaded or saved it). Saving the in-memory snapshot
+    /// wholesale would silently discard that outside change.
+    func save(_ mutate: (inout VoxConfig) -> Void) {
         do {
             // Defaults must not quietly replace a config we only failed to
             // parse: keep the user's file, under another name.
@@ -76,10 +81,12 @@ final class AppState: ObservableObject {
                 try store.quarantineUnreadableFile()
                 configLoadError = nil
             }
-            try store.save(newConfig)
-            config = newConfig
-            feedback.config = newConfig.feedback
-            onConfigChange?(newConfig)
+            var fresh = (try? store.load()) ?? config
+            mutate(&fresh)
+            try store.save(fresh)
+            config = fresh
+            feedback.config = fresh.feedback
+            onConfigChange?(fresh)
         } catch {
             status = .failed(voxMessage(for: error))
         }
