@@ -82,6 +82,15 @@ final class ConfigKeysTests: XCTestCase {
         XCTAssertThrowsError(try ConfigKeys.set("llm.temperature", to: "warm", in: &config))
     }
 
+    func testSoundNamesAreMatchedCaseInsensitivelyAndTyposRejected() throws {
+        var config = VoxConfig()
+        try ConfigKeys.set("feedback.start_sound", to: "glass", in: &config)
+        XCTAssertEqual(config.feedback.startSound, "Glass")
+        try ConfigKeys.set("feedback.stop_sound", to: "off", in: &config)
+        XCTAssertNil(config.feedback.stopSound)
+        XCTAssertThrowsError(try ConfigKeys.set("feedback.error_sound", to: "Klaxon", in: &config))
+    }
+
     func testMaxOutputTokensAcceptsValuesAboveUInt16() throws {
         var config = VoxConfig()
         try ConfigKeys.set("llm.max_output_tokens", to: "100000", in: &config)

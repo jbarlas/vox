@@ -44,6 +44,13 @@ final class ConfigStoreTests: XCTestCase {
         config.hotkey = HotkeyConfig(keyCode: 4, modifiers: ["command", "shift"], activation: .toggle)
         config.recording.silenceTimeoutSeconds = nil
         config.output.destination = .json
+        config.feedback = FeedbackConfig(
+            soundsEnabled: false,
+            startSound: "Hero",
+            stopSound: nil,
+            errorSound: "Funk",
+            showOverlay: false
+        )
         config.llm.maxOutputTokens = nil
         config.modes.append(
             ModeDefinition(name: "terse", kind: .llm, prompt: "Be terse.", model: "ollama/qwen2.5")
@@ -102,6 +109,19 @@ final class ConfigStoreTests: XCTestCase {
         }
         XCTAssertEqual(updated.model, "base.en")
         XCTAssertEqual(try store.load().model, "base.en")
+    }
+
+    /// A config written before a section existed must keep loading; only the
+    /// schema version gates compatibility.
+    func testConfigMissingASectionFallsBackToDefaults() throws {
+        let json = """
+        {"schema_version": 1, "model": "tiny.en", "default_mode": "raw"}
+        """
+        try Data(json.utf8).write(to: store.paths.configFile)
+        let config = try store.load()
+        XCTAssertEqual(config.model, "tiny.en")
+        XCTAssertEqual(config.feedback, .default)
+        XCTAssertEqual(config.modes.map(\.name), ModeDefinition.builtIns.map(\.name))
     }
 
     func testVoxHomeEnvironmentOverridesSupportDirectory() {

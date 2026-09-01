@@ -1,3 +1,4 @@
+import AppKit
 import ServiceManagement
 import SwiftUI
 import VoxCore
@@ -16,6 +17,8 @@ struct SettingsView: View {
                 .tabItem { Label("Modes", systemImage: "wand.and.stars") }
             OutputSettings(state: state)
                 .tabItem { Label("Output", systemImage: "doc.on.clipboard") }
+            FeedbackSettings(state: state)
+                .tabItem { Label("Feedback", systemImage: "speaker.wave.2") }
         }
         .padding(16)
         .frame(minWidth: 600, minHeight: 440)
@@ -139,6 +142,73 @@ private struct GeneralSettings: View {
             set: { enabled in
                 var config = state.config
                 config.recording.silenceTimeoutSeconds = enabled ? 2.0 : nil
+                state.save(config)
+            }
+        )
+    }
+
+    private func binding<Value>(_ keyPath: WritableKeyPath<VoxConfig, Value>) -> Binding<Value> {
+        Binding(
+            get: { state.config[keyPath: keyPath] },
+            set: { newValue in
+                var config = state.config
+                config[keyPath: keyPath] = newValue
+                state.save(config)
+            }
+        )
+    }
+}
+
+private struct FeedbackSettings: View {
+    @ObservedObject var state: AppState
+
+    var body: some View {
+        Form {
+            Section("Sounds") {
+                Toggle("Play sounds", isOn: binding(\.feedback.soundsEnabled))
+                soundPicker("Recording starts", keyPath: \.feedback.startSound)
+                soundPicker("Recording stops", keyPath: \.feedback.stopSound)
+                soundPicker("Something fails", keyPath: \.feedback.errorSound)
+            }
+            .disabled(!state.config.feedback.soundsEnabled)
+
+            Section("On screen") {
+                Toggle("Show waveform at the top of the screen", isOn: binding(\.feedback.showOverlay))
+                Text("A click-through strip under the menu bar showing the microphone input while recording.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func soundPicker(
+        _ label: String,
+        keyPath: WritableKeyPath<VoxConfig, String?>
+    ) -> some View {
+        HStack {
+            Picker(label, selection: soundBinding(keyPath)) {
+                Text("None").tag("")
+                ForEach(FeedbackConfig.systemSoundNames, id: \.self) { name in
+                    Text(name).tag(name)
+                }
+            }
+            Button {
+                if let name = state.config[keyPath: keyPath] { NSSound(named: name)?.play() }
+            } label: {
+                Image(systemName: "play.circle")
+            }
+            .buttonStyle(.borderless)
+            .disabled(state.config[keyPath: keyPath] == nil)
+        }
+    }
+
+    private func soundBinding(_ keyPath: WritableKeyPath<VoxConfig, String?>) -> Binding<String> {
+        Binding(
+            get: { state.config[keyPath: keyPath] ?? "" },
+            set: { newValue in
+                var config = state.config
+                config[keyPath: keyPath] = newValue.isEmpty ? nil : newValue
                 state.save(config)
             }
         )

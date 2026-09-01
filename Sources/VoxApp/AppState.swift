@@ -32,13 +32,18 @@ final class AppState: ObservableObject {
     /// Held across runs so the model stays resident on the GPU between
     /// dictations.
     private let engine = WhisperEngine()
+    private let feedback: FeedbackPlayer
+    private let overlay = RecordingOverlayController()
     private var pipeline: DictationPipeline?
     private var currentTask: Task<Void, Never>?
 
     init(paths: VoxPaths = VoxPaths()) {
+        let store = ConfigStore(paths: paths)
+        let config = (try? store.load()) ?? VoxConfig()
         self.paths = paths
-        self.store = ConfigStore(paths: paths)
-        self.config = (try? store.load()) ?? VoxConfig()
+        self.store = store
+        self.config = config
+        self.feedback = FeedbackPlayer(config: config.feedback)
         self.sessionHistory = SessionHistory(
             paths: paths,
             limit: config.output.sessionHistoryLimit
@@ -52,6 +57,7 @@ final class AppState: ObservableObject {
         do {
             try store.save(newConfig)
             config = newConfig
+            feedback.config = newConfig.feedback
             onConfigChange?(newConfig)
         } catch {
             status = .failed(voxMessage(for: error))
@@ -61,6 +67,7 @@ final class AppState: ObservableObject {
     func reloadConfig() {
         if let loaded = try? store.load() {
             config = loaded
+            feedback.config = loaded.feedback
         }
     }
 
@@ -101,6 +108,8 @@ final class AppState: ObservableObject {
         self.pipeline = pipeline
         status = .recording
         inputLevelDB = -160
+        feedback.playStart()
+        if config.feedback.showOverlay { overlay.show() }
 
         currentTask = Task { [weak self] in
             guard let self else { return }
@@ -111,7 +120,7 @@ final class AppState: ObservableObject {
                         Task { @MainActor [weak self] in self?.apply(stage: stage) }
                     },
                     onLevel: { level in
-                        Task { @MainActor [weak self] in self?.inputLevelDB = level }
+                        Task { @MainActor [weak self] in self?.apply(level: level) }
                     }
                 )
                 self.finish(with: result)
@@ -125,11 +134,22 @@ final class AppState: ObservableObject {
         pipeline?.stopRecording()
     }
 
+    private func apply(level: Double) {
+        inputLevelDB = level
+        overlay.update(levelDB: level)
+    }
+
     private func apply(stage: DictationPipeline.Stage) {
         switch stage {
         case .recording:
             status = .recording
         case .transcribing, .processingMode:
+            // The stop chime belongs here, not in `stopDictation()`: a
+            // recording also ends on silence or the duration cap.
+            if status != .processing {
+                feedback.playStop()
+                overlay.setProcessing(true)
+            }
             status = .processing
         case .finished:
             break
@@ -154,13 +174,17 @@ final class AppState: ObservableObject {
             refreshHistory()
         } catch {
             status = .failed(voxMessage(for: error))
+            feedback.playError()
         }
         inputLevelDB = -160
+        overlay.hide()
     }
 
     private func fail(with error: Error) {
         status = .failed(voxMessage(for: error))
         inputLevelDB = -160
+        feedback.playError()
+        overlay.hide()
     }
 
     private func voxMessage(for error: Error) -> String {

@@ -20,6 +20,11 @@ public enum ConfigKeys {
         "output.destination",
         "output.keep_session_history",
         "output.session_history_limit",
+        "feedback.sounds_enabled",
+        "feedback.start_sound",
+        "feedback.stop_sound",
+        "feedback.error_sound",
+        "feedback.show_overlay",
         "llm.base_url",
         "llm.model",
         "llm.api_key_env_var",
@@ -46,6 +51,11 @@ public enum ConfigKeys {
         case "output.destination": return config.output.destination.rawValue
         case "output.keep_session_history": return String(config.output.keepSessionHistory)
         case "output.session_history_limit": return String(config.output.sessionHistoryLimit)
+        case "feedback.sounds_enabled": return String(config.feedback.soundsEnabled)
+        case "feedback.start_sound": return config.feedback.startSound ?? "off"
+        case "feedback.stop_sound": return config.feedback.stopSound ?? "off"
+        case "feedback.error_sound": return config.feedback.errorSound ?? "off"
+        case "feedback.show_overlay": return String(config.feedback.showOverlay)
         case "llm.base_url": return config.llm.baseURL
         case "llm.model": return config.llm.model
         case "llm.api_key_env_var": return config.llm.apiKeyEnvVar ?? "none"
@@ -105,6 +115,16 @@ public enum ConfigKeys {
             config.output.keepSessionHistory = try bool(value, key)
         case "output.session_history_limit":
             config.output.sessionHistoryLimit = try integer(value, key, in: 1...10_000)
+        case "feedback.sounds_enabled":
+            config.feedback.soundsEnabled = try bool(value, key)
+        case "feedback.start_sound":
+            config.feedback.startSound = try soundName(value, key)
+        case "feedback.stop_sound":
+            config.feedback.stopSound = try soundName(value, key)
+        case "feedback.error_sound":
+            config.feedback.errorSound = try soundName(value, key)
+        case "feedback.show_overlay":
+            config.feedback.showOverlay = try bool(value, key)
         case "llm.base_url":
             guard URL(string: value) != nil else {
                 throw VoxError.config("llm.base_url is not a valid URL", detail: value)
@@ -161,6 +181,22 @@ public enum ConfigKeys {
             )
         }
         return parsed
+    }
+
+    /// Typos here would otherwise be silent — a missing sound just does not
+    /// play — so the CLI only accepts the stock macOS sounds. Editing the
+    /// config file by hand still allows a custom sound from `~/Library/Sounds`.
+    static func soundName(_ value: String, _ key: String) throws -> String? {
+        if isUnset(value) { return nil }
+        guard let match = FeedbackConfig.systemSoundNames.first(
+            where: { $0.caseInsensitiveCompare(value) == .orderedSame }
+        ) else {
+            throw VoxError.config(
+                "Unknown sound '\(value)' for \(key)",
+                detail: "Expected off or one of: \(FeedbackConfig.systemSoundNames.joined(separator: ", "))"
+            )
+        }
+        return match
     }
 
     static let knownModifiers: Set<String> = ["command", "option", "control", "shift", "function"]

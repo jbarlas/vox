@@ -15,6 +15,7 @@ public struct VoxConfig: Codable, Sendable, Equatable {
     public var hotkey: HotkeyConfig
     public var recording: RecordingConfig
     public var output: OutputConfig
+    public var feedback: FeedbackConfig
     public var llm: LLMConfig
     public var modes: [ModeDefinition]
 
@@ -27,6 +28,7 @@ public struct VoxConfig: Codable, Sendable, Equatable {
         hotkey: HotkeyConfig = .default,
         recording: RecordingConfig = .default,
         output: OutputConfig = .default,
+        feedback: FeedbackConfig = .default,
         llm: LLMConfig = .default,
         modes: [ModeDefinition] = ModeDefinition.builtIns
     ) {
@@ -38,8 +40,31 @@ public struct VoxConfig: Codable, Sendable, Equatable {
         self.hotkey = hotkey
         self.recording = recording
         self.output = output
+        self.feedback = feedback
         self.llm = llm
         self.modes = modes
+    }
+
+    /// Every section is optional on read so a config written by an older build
+    /// keeps working when a new section is added; only `schemaVersion` guards
+    /// compatibility, and it guards it in one direction.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = VoxConfig()
+        schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion)
+            ?? defaults.schemaVersion
+        model = try container.decodeIfPresent(String.self, forKey: .model) ?? defaults.model
+        defaultMode = try container.decodeIfPresent(String.self, forKey: .defaultMode)
+            ?? defaults.defaultMode
+        language = try container.decodeIfPresent(String.self, forKey: .language)
+        vocabulary = try container.decodeIfPresent([String].self, forKey: .vocabulary) ?? []
+        hotkey = try container.decodeIfPresent(HotkeyConfig.self, forKey: .hotkey) ?? .default
+        recording = try container.decodeIfPresent(RecordingConfig.self, forKey: .recording) ?? .default
+        output = try container.decodeIfPresent(OutputConfig.self, forKey: .output) ?? .default
+        feedback = try container.decodeIfPresent(FeedbackConfig.self, forKey: .feedback) ?? .default
+        llm = try container.decodeIfPresent(LLMConfig.self, forKey: .llm) ?? .default
+        modes = try container.decodeIfPresent([ModeDefinition].self, forKey: .modes)
+            ?? ModeDefinition.builtIns
     }
 
     public func mode(named name: String) -> ModeDefinition? {
@@ -79,6 +104,52 @@ public struct VoxConfig: Codable, Sendable, Equatable {
             try mode.validate()
         }
         try recording.validate()
+        try feedback.validate()
+    }
+}
+
+/// Audible and on-screen confirmation that Vox is listening. Purely a menu bar
+/// app concern: the CLI writes to stderr instead and stays quiet.
+public struct FeedbackConfig: Codable, Sendable, Equatable {
+    /// Names of the sounds shipped in `/System/Library/Sounds`, which
+    /// `NSSound(named:)` resolves without bundling any audio.
+    public static let systemSoundNames = [
+        "Basso", "Blow", "Bottle", "Frog", "Funk", "Glass", "Hero",
+        "Morse", "Ping", "Pop", "Purr", "Sosumi", "Submarine", "Tink",
+    ]
+
+    public var soundsEnabled: Bool
+    /// `nil` plays nothing for that event. Any name under `/System/Library/Sounds`
+    /// or `~/Library/Sounds` works, not only `systemSoundNames`.
+    public var startSound: String?
+    public var stopSound: String?
+    public var errorSound: String?
+    /// The floating waveform strip at the top of the screen while recording.
+    public var showOverlay: Bool
+
+    public init(
+        soundsEnabled: Bool = true,
+        startSound: String? = "Tink",
+        stopSound: String? = "Pop",
+        errorSound: String? = "Basso",
+        showOverlay: Bool = true
+    ) {
+        self.soundsEnabled = soundsEnabled
+        self.startSound = startSound
+        self.stopSound = stopSound
+        self.errorSound = errorSound
+        self.showOverlay = showOverlay
+    }
+
+    public static let `default` = FeedbackConfig()
+
+    public func validate() throws {
+        for name in [startSound, stopSound, errorSound].compactMap({ $0 }) where name.isEmpty {
+            throw VoxError.config(
+                "feedback sound names must be non-empty",
+                detail: "Use null to disable a sound."
+            )
+        }
     }
 }
 

@@ -125,7 +125,8 @@ every key.
 
 Notable keys: `model`, `default_mode`, `language`, `vocab`, `hotkey.*`,
 `recording.max_duration_seconds`, `recording.silence_timeout_seconds`,
-`output.destination`, `llm.base_url`, `llm.model`, `llm.api_key_env_var`.
+`output.destination`, `feedback.*`, `llm.base_url`, `llm.model`,
+`llm.api_key_env_var`.
 
 Vox never stores an API key: `llm.api_key_env_var` names the environment variable
 to read it from.
@@ -162,7 +163,18 @@ vox record --mode bullets
 `dist/Vox.app` runs as a menu bar item (no Dock icon). The icon reflects idle,
 recording, and transcribing; the popover has start/stop, a level meter, the mode
 picker, and the last transcript; Settings covers model, language, hotkey,
-recording limits, vocabulary, modes, and output.
+recording limits, vocabulary, modes, output, and feedback.
+
+While recording, a click-through waveform strip floats under the menu bar (on
+whichever screen the pointer is on), and Vox plays a stock macOS sound when
+recording starts and stops. Both are configurable:
+
+```bash
+vox config set feedback.start_sound Glass   # any sound in /System/Library/Sounds
+vox config set feedback.stop_sound off      # silence just this one
+vox config set feedback.sounds_enabled false
+vox config set feedback.show_overlay false
+```
 
 Default hotkey is **⌥Space**, press-and-hold (switchable to toggle in Settings).
 It is registered through Carbon's `RegisterEventHotKey`, so it needs no
