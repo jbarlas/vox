@@ -97,7 +97,8 @@ ln -s /Applications/Vox.app/Contents/MacOS/vox-cli /opt/homebrew/bin/vox
 | `vox permissions` | Check microphone and Accessibility access |
 
 Recording options: `--mode`, `--model`, `--language`, `--output`, `--timeout`,
-`--save-audio`, `--pretty`, `--quiet`.
+`--save-audio`, `--pretty`, `--quiet`, `--verbose` (adds whisper.cpp's own
+native logging, which is otherwise silenced).
 
 Recording stops on trailing silence, on `--timeout`, at
 `recording.max_duration_seconds`, or on the first Ctrl+C (a second one aborts).
