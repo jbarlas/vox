@@ -76,6 +76,33 @@ final class SessionHistoryTests: XCTestCase {
         XCTAssertEqual(try history.entries().first?.rawTranscript, "uh cleaned up")
     }
 
+    func testFailureEntryRoundTrips() throws {
+        let history = self.history()
+        let error = VoxError.llm("LLM endpoint at http://x didn't respond within 60s", detail: "timed out")
+        try history.append(
+            SessionEntry(startedAt: Date(), mode: "prompt", model: "small.en", error: error)
+        )
+        let entry = try XCTUnwrap(history.entries().first)
+        XCTAssertEqual(entry.success, false)
+        XCTAssertEqual(entry.errorCode, .llm)
+        XCTAssertEqual(entry.errorMessage, error.message)
+        XCTAssertEqual(entry.transcript, "")
+    }
+
+    func testOldEntryWithoutNewFieldsStillDecodes() throws {
+        let paths = VoxPaths(supportDirectory: directory)
+        try paths.createSupportDirectories()
+        let legacyJSON = """
+            [{"id":"\(UUID().uuidString)","transcript":"hello","mode":"raw","model":"tiny.en",\
+            "created_at":"2026-01-01T00:00:00Z"}]
+            """
+        try Data(legacyJSON.utf8).write(to: paths.sessionsFile)
+        let entry = try XCTUnwrap(try SessionHistory(paths: paths).entries().first)
+        XCTAssertEqual(entry.transcript, "hello")
+        XCTAssertNil(entry.rawTranscript)
+        XCTAssertNil(entry.success)
+    }
+
     func testCorruptHistoryIsTreatedAsEmpty() throws {
         let paths = VoxPaths(supportDirectory: directory)
         try paths.createSupportDirectories()

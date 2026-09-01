@@ -99,12 +99,13 @@ struct RecordRunner {
     let inputFile: URL?
 
     func run() async throws {
+        let startedAt = Date()
         // Resolved before anything can fail so a failure is reported in the
         // shape the caller will parse — which config selects just as much as
         // `--output` does. An unreadable config leaves it nil and the error
         // goes to stderr, the only shape that is certainly right then.
-        let requestedDestination =
-            options.output ?? (try? options.configOptions.loadConfig())?.output.destination
+        let earlyConfig = try? options.configOptions.loadConfig()
+        let requestedDestination = options.output ?? earlyConfig?.output.destination
         do {
             let result = try await execute()
             if let rendered = result {
@@ -112,6 +113,7 @@ struct RecordRunner {
             }
         } catch {
             let voxError = voxError(from: error)
+            logFailure(voxError, startedAt: startedAt, config: earlyConfig)
             if requestedDestination == .json {
                 let envelope = RecordEnvelope(error: voxError)
                 Stdout.write((try? VoxJSON.string(envelope, pretty: options.pretty)) ?? #"{"ok":false}"#)
@@ -120,6 +122,24 @@ struct RecordRunner {
             }
             throw ExitCode(voxError.exitCode)
         }
+    }
+
+    /// A hotkey/Ctrl+C tapped before the microphone opened isn't a failure
+    /// worth a session entry, same judgment call the app makes.
+    private func logFailure(_ error: VoxError, startedAt: Date, config: VoxConfig?) {
+        guard let config, config.output.keepSessionHistory, error.code != .cancelled else { return }
+        let history = SessionHistory(
+            paths: options.configOptions.paths,
+            limit: config.output.sessionHistoryLimit
+        )
+        try? history.append(
+            SessionEntry(
+                startedAt: startedAt,
+                mode: options.mode ?? config.defaultMode,
+                model: options.model ?? config.model,
+                error: error
+            )
+        )
     }
 
     private func execute() async throws -> String? {

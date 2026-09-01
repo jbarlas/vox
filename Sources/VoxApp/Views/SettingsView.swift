@@ -491,13 +491,20 @@ private struct OutputSettings: View {
                         )
                     }
                 }
-                Text(
-                    "Stored at ~/Library/Application Support/Vox/sessions.json, newest first, "
-                        + "with both the mode output and the raw whisper.cpp transcript for "
-                        + "each entry — useful for reviewing corrections later."
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                HStack {
+                    Text(
+                        "Newest first, with the mode output, the raw whisper.cpp transcript, "
+                            + "and timing/error info for each entry — useful for reviewing "
+                            + "corrections or fine-tuning later."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Reveal in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([state.sessionsFileURL])
+                    }
+                    .font(.caption)
+                }
                 Button("Clear history now") { state.clearHistory() }
                     .disabled(state.history.isEmpty)
             }

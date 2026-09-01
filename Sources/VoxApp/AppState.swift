@@ -129,6 +129,8 @@ final class AppState: ObservableObject {
 
     func startDictation(modeName: String? = nil) {
         guard !status.isBusy else { return }
+        let startedAt = Date()
+        let requestedMode = modeName ?? config.defaultMode
         let pipeline = DictationPipeline(config: config, paths: paths, engine: engine)
         self.pipeline = pipeline
         status = .recording
@@ -150,7 +152,7 @@ final class AppState: ObservableObject {
                 )
                 self.finish(with: result)
             } catch {
-                self.fail(with: error)
+                self.fail(with: error, startedAt: startedAt, mode: requestedMode)
             }
         }
     }
@@ -205,14 +207,21 @@ final class AppState: ObservableObject {
         overlay.hide()
     }
 
-    private func fail(with error: Error) {
+    private func fail(with error: Error, startedAt: Date, mode: String) {
         inputLevelDB = -160
         overlay.hide()
         // A hotkey tapped and released before the microphone opened is not a
-        // failure worth chiming about.
-        if (error as? VoxError)?.code == .cancelled {
+        // failure worth chiming about, or logging.
+        guard (error as? VoxError)?.code != .cancelled else {
             status = .idle
             return
+        }
+        if config.output.keepSessionHistory {
+            let voxError = (error as? VoxError) ?? VoxError.wrap(error, code: .internalError, message: voxMessage(for: error))
+            try? sessionHistory.append(
+                SessionEntry(startedAt: startedAt, mode: mode, model: config.model, error: voxError)
+            )
+            refreshHistory()
         }
         status = .failed(voxMessage(for: error))
         feedback.playError()
@@ -224,6 +233,8 @@ final class AppState: ObservableObject {
     }
 
     // MARK: - History
+
+    var sessionsFileURL: URL { paths.sessionsFile }
 
     func refreshHistory() {
         history = (try? sessionHistory.entries()) ?? []

@@ -67,10 +67,17 @@ public struct LiteLLMClient: ChatCompletionClient {
         let response: URLResponse
         do {
             (data, response) = try await session.data(for: urlRequest)
+        } catch let error as URLError where error.code == .timedOut {
+            throw VoxError.llm(
+                "LLM endpoint at \(endpoint.absoluteString) didn't respond within \(Int(timeout))s",
+                detail: "A local model that has to load from disk first can easily take longer than "
+                    + "that on the first call after it goes idle. Raise llm.timeout_seconds, or keep "
+                    + "the model warm (e.g. Ollama's keep_alive)."
+            )
         } catch {
             throw VoxError.llm(
                 "Could not reach the LLM endpoint at \(endpoint.absoluteString)",
-                detail: "\(error.localizedDescription) — is LiteLLM running?"
+                detail: "\(error.localizedDescription) — is the endpoint running?"
             )
         }
         if let httpResponse = response as? HTTPURLResponse, !(200..<300).contains(httpResponse.statusCode) {

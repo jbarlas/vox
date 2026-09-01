@@ -9,19 +9,32 @@ final class StatusItemController: NSObject {
     private let state: AppState
     private let statusItem: NSStatusItem
     private let popover = NSPopover()
+    private let popoverContent: NSHostingController<PopoverView>
     private var settingsWindow: NSWindow?
     private var cancellables = Swift.Set<AnyCancellable>()
 
     init(state: AppState) {
         self.state = state
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        super.init()
-
-        popover.behavior = .transient
-        popover.contentSize = NSSize(width: 320, height: 260)
-        popover.contentViewController = NSHostingController(
-            rootView: PopoverView(state: state, openSettings: { [weak self] in self?.openSettings() })
+        self.popoverContent = NSHostingController(
+            rootView: PopoverView(state: state, openSettings: {})
         )
+        super.init()
+        // PopoverView's height genuinely varies (the level meter and "Last
+        // transcript" sections come and go), but the popover was given one
+        // fixed contentSize at construction time and never updated — on any
+        // state where the real content differs from that guess, NSPopover's
+        // anchor/arrow math goes stale and the popover can appear detached,
+        // floating well below the status item instead of right under it.
+        // sizingOptions keeps NSPopover in sync with the actual SwiftUI
+        // content size automatically; recomputing it in togglePopover()
+        // below covers macOS versions before that option existed (13.3).
+        if #available(macOS 13.3, *) {
+            popoverContent.sizingOptions = .preferredContentSize
+        }
+        popoverContent.rootView = PopoverView(state: state, openSettings: { [weak self] in self?.openSettings() })
+        popover.behavior = .transient
+        popover.contentViewController = popoverContent
 
         if let button = statusItem.button {
             button.action = #selector(togglePopover)
@@ -44,6 +57,12 @@ final class StatusItemController: NSObject {
         if popover.isShown {
             popover.performClose(nil)
         } else if let button = statusItem.button {
+            // Belt-and-suspenders alongside sizingOptions above: fits the
+            // popover to the content it's about to show, for the very first
+            // show() (before sizingOptions has anything to react to) and on
+            // macOS < 13.3, where sizingOptions doesn't exist at all.
+            let fitting = popoverContent.view.fittingSize
+            popover.contentSize = NSSize(width: 320, height: max(fitting.height, 1))
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
         }

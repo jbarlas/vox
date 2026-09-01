@@ -302,7 +302,7 @@ public struct LLMConfig: Codable, Sendable, Equatable {
         model: String = "ollama/llama3.1",
         apiKeyEnvVar: String? = "LITELLM_API_KEY",
         temperature: Double = 0.2,
-        timeoutSeconds: Double = 30,
+        timeoutSeconds: Double = 60,
         maxOutputTokens: Int? = 1024
     ) {
         self.baseURL = baseURL
