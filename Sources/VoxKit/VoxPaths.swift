@@ -35,6 +35,11 @@ public struct VoxPaths: Sendable {
     public var sessionsFile: URL { supportDirectory.appendingPathComponent("sessions.json") }
     public var logFile: URL { supportDirectory.appendingPathComponent("vox.log") }
 
+    /// Sidecar files `FileLock` locks, next to the documents they guard. They
+    /// are never read or written — only `flock`ed — so they stay empty.
+    public var configLockFile: URL { supportDirectory.appendingPathComponent("config.json.lock") }
+    public var sessionsLockFile: URL { supportDirectory.appendingPathComponent("sessions.json.lock") }
+
     public func modelFile(for model: WhisperModel) -> URL {
         modelsDirectory.appendingPathComponent(model.fileName)
     }

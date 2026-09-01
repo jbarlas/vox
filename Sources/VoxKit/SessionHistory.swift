@@ -137,18 +137,25 @@ public final class SessionHistory {
     public func append(_ entry: SessionEntry) throws {
         lock.lock()
         defer { lock.unlock() }
-        var entries = (try? loadLocked()) ?? []
-        entries.insert(entry, at: 0)
-        if let limit, entries.count > limit {
-            entries = Array(entries.prefix(limit))
+        // Cross-process too: a hotkey dictation in the app and a `vox record`
+        // finishing together would otherwise both read the same array and the
+        // later write would drop the other's entry.
+        try FileLock.withLock(at: paths.sessionsLockFile) {
+            var entries = (try? loadLocked()) ?? []
+            entries.insert(entry, at: 0)
+            if let limit, entries.count > limit {
+                entries = Array(entries.prefix(limit))
+            }
+            try writeLocked(entries)
         }
-        try writeLocked(entries)
     }
 
     public func clear() throws {
         lock.lock()
         defer { lock.unlock() }
-        try writeLocked([])
+        try FileLock.withLock(at: paths.sessionsLockFile) {
+            try writeLocked([])
+        }
     }
 
     private func loadLocked() throws -> [SessionEntry] {
