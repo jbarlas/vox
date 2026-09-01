@@ -22,6 +22,9 @@ final class AppState: ObservableObject {
     @Published private(set) var inputLevelDB: Double = -160
     @Published private(set) var history: [SessionEntry] = []
     @Published var config: VoxConfig
+    /// Non-nil when the config file on disk could not be read, in which case
+    /// `config` holds defaults that have deliberately not been written back.
+    @Published private(set) var configLoadError: String?
 
     /// Called after a config save so the hotkey registration can follow.
     var onConfigChange: ((VoxConfig) -> Void)?
@@ -39,15 +42,27 @@ final class AppState: ObservableObject {
 
     init(paths: VoxPaths = VoxPaths()) {
         let store = ConfigStore(paths: paths)
-        let config = (try? store.load()) ?? VoxConfig()
+        var loadError: String?
+        var config: VoxConfig
+        do {
+            config = try store.load()
+        } catch {
+            config = VoxConfig()
+            loadError =
+                (error as? VoxError)?.message ?? error.localizedDescription
+        }
         self.paths = paths
         self.store = store
         self.config = config
+        self.configLoadError = loadError
         self.feedback = FeedbackPlayer(config: config.feedback)
         self.sessionHistory = SessionHistory(
             paths: paths,
             limit: config.output.sessionHistoryLimit
         )
+        if let loadError {
+            status = .failed(loadError)
+        }
         refreshHistory()
     }
 
@@ -55,6 +70,12 @@ final class AppState: ObservableObject {
 
     func save(_ newConfig: VoxConfig) {
         do {
+            // Defaults must not quietly replace a config we only failed to
+            // parse: keep the user's file, under another name.
+            if configLoadError != nil {
+                try store.quarantineUnreadableFile()
+                configLoadError = nil
+            }
             try store.save(newConfig)
             config = newConfig
             feedback.config = newConfig.feedback
@@ -65,9 +86,13 @@ final class AppState: ObservableObject {
     }
 
     func reloadConfig() {
-        if let loaded = try? store.load() {
+        do {
+            let loaded = try store.load()
             config = loaded
             feedback.config = loaded.feedback
+            configLoadError = nil
+        } catch {
+            configLoadError = voxMessage(for: error)
         }
     }
 
@@ -181,10 +206,16 @@ final class AppState: ObservableObject {
     }
 
     private func fail(with error: Error) {
-        status = .failed(voxMessage(for: error))
         inputLevelDB = -160
-        feedback.playError()
         overlay.hide()
+        // A hotkey tapped and released before the microphone opened is not a
+        // failure worth chiming about.
+        if (error as? VoxError)?.code == .cancelled {
+            status = .idle
+            return
+        }
+        status = .failed(voxMessage(for: error))
+        feedback.playError()
     }
 
     private func voxMessage(for error: Error) -> String {

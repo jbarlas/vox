@@ -114,8 +114,18 @@ public enum AudioNormalizer {
                 detail: error.localizedDescription
             )
         }
+        // Both pipes are drained concurrently: raw PCM on stdout is large, and
+        // reading it to the end first would let a chatty stderr fill its buffer
+        // and wedge ffmpeg before it ever finishes writing audio.
+        let errorData = UnsafeSendableBox<Data>(Data())
+        let errorDrained = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
+            errorData.value = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            errorDrained.signal()
+        }
         let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        let errorText = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+        errorDrained.wait()
+        let errorText = String(data: errorData.value, encoding: .utf8)
         process.waitUntilExit()
 
         guard process.terminationStatus == 0, !data.isEmpty else {
@@ -129,6 +139,13 @@ public enum AudioNormalizer {
             Array(raw.bindMemory(to: Float.self))
         }
         return PCMAudio(samples: samples)
+    }
+
+    /// Handoff of a value between a drain queue and the caller, ordered by the
+    /// semaphore rather than by the type system.
+    private final class UnsafeSendableBox<Value>: @unchecked Sendable {
+        var value: Value
+        init(_ value: Value) { self.value = value }
     }
 
     static func locateFFmpeg() -> URL? {

@@ -82,10 +82,14 @@ public final class ModelManager: NSObject {
         }
         do {
             if fileManager.fileExists(atPath: destination.path) {
-                try fileManager.removeItem(at: destination)
+                _ = try fileManager.replaceItemAt(destination, withItemAt: temporaryURL)
+            } else {
+                try fileManager.moveItem(at: temporaryURL, to: destination)
             }
-            try fileManager.moveItem(at: temporaryURL, to: destination)
         } catch {
+            // Otherwise a repeatedly failing install strands a model-sized file
+            // per attempt.
+            try? fileManager.removeItem(at: temporaryURL)
             throw VoxError.model(
                 "Could not install model '\(model.id)' into \(destination.path)",
                 detail: error.localizedDescription

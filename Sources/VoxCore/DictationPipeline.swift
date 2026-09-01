@@ -40,6 +40,9 @@ public final class DictationPipeline {
     private let modeRunner: ModeRunner
     private let modelManager: ModelManager
     private let capture: AudioCapture
+    /// Set by a stop that arrives before the microphone is open — a
+    /// press-and-hold release during model loading, typically.
+    private let stopRequested = Flag()
 
     public init(
         config: VoxConfig,
@@ -59,6 +62,7 @@ public final class DictationPipeline {
     /// Stops an in-flight recording; the pipeline then continues to transcribe
     /// what it already has. This is what the hotkey release calls.
     public func stopRecording() {
+        stopRequested.set()
         capture.stop()
     }
 
@@ -95,6 +99,12 @@ public final class DictationPipeline {
             timings.normalizeMs = Self.elapsedMs(since: clock)
             stopReason = .endOfInput
         } else {
+            guard !stopRequested.isSet else {
+                throw VoxError(
+                    code: .cancelled,
+                    message: "Recording was stopped before the microphone opened"
+                )
+            }
             onStage?(.recording)
             let clock = Date()
             let output = try await capture.record(timeout: options.timeout) { event in
@@ -147,6 +157,23 @@ public final class DictationPipeline {
             finishedAt: finishedAt,
             timings: timings
         )
+    }
+
+    private final class Flag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = false
+
+        var isSet: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return value
+        }
+
+        func set() {
+            lock.lock()
+            value = true
+            lock.unlock()
+        }
     }
 
     private static func elapsedMs(since start: Date, until end: Date = Date()) -> Int {

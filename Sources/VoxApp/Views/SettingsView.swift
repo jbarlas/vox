@@ -166,11 +166,13 @@ private struct FeedbackSettings: View {
         Form {
             Section("Sounds") {
                 Toggle("Play sounds", isOn: binding(\.feedback.soundsEnabled))
-                soundPicker("Recording starts", keyPath: \.feedback.startSound)
-                soundPicker("Recording stops", keyPath: \.feedback.stopSound)
-                soundPicker("Something fails", keyPath: \.feedback.errorSound)
+                Group {
+                    soundPicker("Recording starts", keyPath: \.feedback.startSound)
+                    soundPicker("Recording stops", keyPath: \.feedback.stopSound)
+                    soundPicker("Something fails", keyPath: \.feedback.errorSound)
+                }
+                .disabled(!state.config.feedback.soundsEnabled)
             }
-            .disabled(!state.config.feedback.soundsEnabled)
 
             Section("On screen") {
                 Toggle("Show waveform at the top of the screen", isOn: binding(\.feedback.showOverlay))

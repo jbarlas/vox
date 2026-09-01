@@ -124,6 +124,15 @@ final class ConfigStoreTests: XCTestCase {
         XCTAssertEqual(config.modes.map(\.name), ModeDefinition.builtIns.map(\.name))
     }
 
+    func testQuarantineMovesAnUnreadableConfigAside() throws {
+        try Data("{ not json".utf8).write(to: store.paths.configFile)
+        let backup = try XCTUnwrap(try store.quarantineUnreadableFile())
+        XCTAssertFalse(store.configExists)
+        XCTAssertEqual(try String(contentsOf: backup, encoding: .utf8), "{ not json")
+        // Nothing to move once it is gone.
+        XCTAssertNil(try store.quarantineUnreadableFile())
+    }
+
     func testVoxHomeEnvironmentOverridesSupportDirectory() {
         let paths = VoxPaths(environment: ["VOX_HOME": directory.path])
         XCTAssertEqual(paths.supportDirectory.path, directory.path)

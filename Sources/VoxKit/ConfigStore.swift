@@ -59,6 +59,29 @@ public final class ConfigStore {
         }
     }
 
+    /// Moves an unreadable config aside, returning where it went. Callers do
+    /// this before writing over a file they could not parse, so hand-edited
+    /// settings survive a syntax error.
+    @discardableResult
+    public func quarantineUnreadableFile() throws -> URL? {
+        guard configExists else { return nil }
+        let backup = paths.configFile
+            .deletingLastPathComponent()
+            .appendingPathComponent("config.invalid.json")
+        do {
+            if fileManager.fileExists(atPath: backup.path) {
+                try fileManager.removeItem(at: backup)
+            }
+            try fileManager.moveItem(at: paths.configFile, to: backup)
+        } catch {
+            throw VoxError.config(
+                "Could not move the unreadable config aside",
+                detail: error.localizedDescription
+            )
+        }
+        return backup
+    }
+
     /// Creates a starter config. Returns `false` when one already existed and
     /// `force` was not requested, which keeps `make setup` idempotent.
     @discardableResult

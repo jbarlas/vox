@@ -100,8 +100,11 @@ struct RecordRunner {
 
     func run() async throws {
         // Resolved before anything can fail so a failure is reported in the
-        // shape the caller asked for.
-        let requestedDestination = options.output
+        // shape the caller will parse — which config selects just as much as
+        // `--output` does. An unreadable config leaves it nil and the error
+        // goes to stderr, the only shape that is certainly right then.
+        let requestedDestination =
+            options.output ?? (try? options.configOptions.loadConfig())?.output.destination
         do {
             let result = try await execute()
             if let rendered = result {
