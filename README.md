@@ -162,12 +162,17 @@ itself rather than being search-and-replaced afterwards.
 - `prompt`, `email` — built-in LLM modes
 - your own — `vox modes add <name> --prompt "..."`
 
+A mode's prompt is the system message; the transcript arrives as the user
+message wrapped in `<transcript>…</transcript>`, which keeps a small model from
+answering a transcript instead of editing it. Write custom prompts against that
+shape, and tell the model not to echo the tags.
+
 LLM modes always talk to one OpenAI-compatible `/v1/chat/completions` endpoint,
 by default a local LiteLLM at `http://127.0.0.1:4000/v1`. Whether a mode's model
 runs on Ollama or a hosted provider is LiteLLM routing, not a Vox concern.
 
 ```bash
-vox modes add bullets --prompt "Rewrite the transcript as terse bullet points."
+vox modes add bullets --prompt "Rewrite the given transcript as terse bullet points. Output only the bullets, no tags or commentary."
 vox modes test bullets "so we should probably ship the fix today and tell support"
 vox record --mode bullets
 ```
