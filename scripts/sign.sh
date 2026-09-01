@@ -23,9 +23,9 @@ if [[ "$IDENTITY" != "-" ]]; then
   EXTRA_FLAGS+=(--options runtime --timestamp)
 fi
 
-if [[ -x "$APP/Contents/MacOS/vox" ]]; then
+if [[ -x "$APP/Contents/MacOS/vox-cli" ]]; then
   codesign --force --sign "$IDENTITY" "${EXTRA_FLAGS[@]+"${EXTRA_FLAGS[@]}"}" \
-    --entitlements "$ENTITLEMENTS" "$APP/Contents/MacOS/vox"
+    --entitlements "$ENTITLEMENTS" "$APP/Contents/MacOS/vox-cli"
 fi
 
 codesign --force --sign "$IDENTITY" "${EXTRA_FLAGS[@]+"${EXTRA_FLAGS[@]}"}" \
