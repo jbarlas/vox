@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/cover.png" alt="Vox" width="240">
+</p>
+
 # Vox
 
 Local, offline speech-to-text for macOS: a menu bar app and a CLI over one shared
@@ -185,12 +189,16 @@ picker, and the last transcript; Settings covers model, language, hotkey,
 recording limits, vocabulary, modes, output, and feedback.
 
 While recording, a click-through waveform strip floats under the menu bar (on
-whichever screen the pointer is on), and Vox plays a stock macOS sound when
-recording starts and stops. Both are configurable:
+whichever screen the pointer is on), and Vox plays a stock macOS sound for four
+events: recording starts, recording stops (mic closed, before transcription or
+a mode runs), the dictation is fully done (output delivered — can land a few
+seconds after "stops" for an LLM mode), and something fails. All four are
+configurable:
 
 ```bash
 vox config set feedback.start_sound Glass   # any sound in /System/Library/Sounds
 vox config set feedback.stop_sound off      # silence just this one
+vox config set feedback.done_sound Glass
 vox config set feedback.sounds_enabled false
 vox config set feedback.show_overlay false
 ```

@@ -124,21 +124,30 @@ public struct FeedbackConfig: Codable, Sendable, Equatable {
     /// `nil` plays nothing for that event. Any name under `/System/Library/Sounds`
     /// or `~/Library/Sounds` works, not only `systemSoundNames`.
     public var startSound: String?
+    /// Plays the instant recording ends, before transcription or a mode
+    /// starts — confirms the mic closed, not that output is ready.
     public var stopSound: String?
+    /// Plays once the transcript (and mode, if any) has actually finished and
+    /// been delivered. Distinct from `stopSound`: an LLM mode can easily run
+    /// several seconds after recording stops, and without this there was no
+    /// audible cue at all for when a dictation was actually done.
+    public var doneSound: String?
     public var errorSound: String?
     /// The floating waveform strip at the top of the screen while recording.
     public var showOverlay: Bool
 
     public init(
         soundsEnabled: Bool = true,
-        startSound: String? = "Tink",
+        startSound: String? = "Ping",
         stopSound: String? = "Pop",
+        doneSound: String? = "Glass",
         errorSound: String? = "Basso",
         showOverlay: Bool = true
     ) {
         self.soundsEnabled = soundsEnabled
         self.startSound = startSound
         self.stopSound = stopSound
+        self.doneSound = doneSound
         self.errorSound = errorSound
         self.showOverlay = showOverlay
     }
@@ -146,7 +155,7 @@ public struct FeedbackConfig: Codable, Sendable, Equatable {
     public static let `default` = FeedbackConfig()
 
     public func validate() throws {
-        for name in [startSound, stopSound, errorSound].compactMap({ $0 }) where name.isEmpty {
+        for name in [startSound, stopSound, doneSound, errorSound].compactMap({ $0 }) where name.isEmpty {
             throw VoxError.config(
                 "feedback sound names must be non-empty",
                 detail: "Use null to disable a sound."

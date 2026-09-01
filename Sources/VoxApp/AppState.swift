@@ -213,6 +213,7 @@ final class AppState: ObservableObject {
                 feedback.playError()
             } else {
                 status = .idle
+                feedback.playDone()
             }
             refreshHistory()
         } catch {

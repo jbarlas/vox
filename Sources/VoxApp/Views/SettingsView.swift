@@ -39,7 +39,8 @@ private struct GeneralSettings: View {
                     }
                 }
                 if let downloadingModel {
-                    Text("Downloading \(downloadingModel)…").font(.caption).foregroundStyle(.secondary)
+                    Text("Downloading \(downloadingModel)…").font(.caption).foregroundStyle(
+                        .secondary)
                 } else if !modelInstalled {
                     HStack {
                         Text("Not downloaded yet.").font(.caption).foregroundStyle(.secondary)
@@ -202,8 +203,12 @@ private struct HotkeyRecorderButton: View {
     var body: some View {
         VStack(alignment: .trailing, spacing: 4) {
             HStack {
-                Text(isRecording ? "Press the new shortcut… (Esc to cancel)" : HotkeyManager.displayString(state.config.hotkey))
-                    .foregroundStyle(isRecording ? .secondary : .primary)
+                Text(
+                    isRecording
+                        ? "Press the new shortcut… (Esc to cancel)"
+                        : HotkeyManager.displayString(state.config.hotkey)
+                )
+                .foregroundStyle(isRecording ? .secondary : .primary)
                 Button(isRecording ? "Cancel" : "Record new shortcut…") {
                     isRecording ? stopRecording() : startRecording()
                 }
@@ -266,16 +271,20 @@ private struct FeedbackSettings: View {
                 Group {
                     soundPicker("Recording starts", keyPath: \.feedback.startSound)
                     soundPicker("Recording stops", keyPath: \.feedback.stopSound)
+                    soundPicker("Dictation is ready", keyPath: \.feedback.doneSound)
                     soundPicker("Something fails", keyPath: \.feedback.errorSound)
                 }
                 .disabled(!state.config.feedback.soundsEnabled)
             }
 
             Section("On screen") {
-                Toggle("Show waveform at the top of the screen", isOn: binding(\.feedback.showOverlay))
-                Text("A click-through strip under the menu bar showing the microphone input while recording.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Toggle(
+                    "Show waveform at the top of the screen", isOn: binding(\.feedback.showOverlay))
+                Text(
+                    "A click-through strip under the menu bar showing the microphone input while recording."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -327,9 +336,11 @@ private struct VocabularySettings: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("One term per line. Terms are injected as whisper.cpp's initial prompt, biasing the decode itself rather than replacing text afterwards.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Text(
+                "One term per line. Terms are injected as whisper.cpp's initial prompt, biasing the decode itself rather than replacing text afterwards."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
             TextEditor(text: $text)
                 .font(.system(.body, design: .monospaced))
                 .border(Color.secondary.opacity(0.3))
@@ -386,7 +397,8 @@ private struct ModesSettings: View {
                 ModeDetail(state: state, mode: mode)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else {
-                Text("Select a mode.").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
+                Text("Select a mode.").foregroundStyle(.secondary).frame(
+                    maxWidth: .infinity, maxHeight: .infinity)
             }
         }
     }
@@ -407,16 +419,20 @@ private struct ModeDetail: View {
                 TextEditor(text: $prompt)
                     .font(.system(.body, design: .monospaced))
                     .border(Color.secondary.opacity(0.3))
-                Text("Sent to \(mode.model ?? state.config.llm.model) via \(state.config.llm.baseURL).")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(
+                    "Sent to \(mode.model ?? state.config.llm.model) via \(state.config.llm.baseURL)."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
                 HStack {
                     Spacer()
                     Button("Save prompt") { savePrompt() }
                 }
             } else {
-                Text("Built-in mode with no prompt: \(mode.kind == .raw ? "returns the transcript untouched" : "applies local rule-based cleanup").")
-                    .font(.callout)
+                Text(
+                    "Built-in mode with no prompt: \(mode.kind == .raw ? "returns the transcript untouched" : "applies local rule-based cleanup")."
+                )
+                .font(.callout)
             }
 
             Button("Make default") { makeDefault() }
@@ -485,17 +501,19 @@ private struct OutputSettings: View {
                     }
                     .font(.caption)
                     Spacer()
-                Button("Clear history now") { state.clearHistory() }
-                    .disabled(state.history.isEmpty)
+                    Button("Clear history now") { state.clearHistory() }
+                        .disabled(state.history.isEmpty)
                 }
             }
 
             Section("LLM modes") {
                 LabeledContent("Endpoint", value: state.config.llm.baseURL)
                 LabeledContent("Default model", value: state.config.llm.model)
-                Text("LLM modes route through this OpenAI-compatible endpoint. Change it with `vox config set llm.base_url`.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(
+                    "LLM modes route through this OpenAI-compatible endpoint. Change it with `vox config set llm.base_url`."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

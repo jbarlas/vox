@@ -23,6 +23,7 @@ public enum ConfigKeys {
         "feedback.sounds_enabled",
         "feedback.start_sound",
         "feedback.stop_sound",
+        "feedback.done_sound",
         "feedback.error_sound",
         "feedback.show_overlay",
         "llm.base_url",
@@ -55,6 +56,7 @@ public enum ConfigKeys {
         case "feedback.sounds_enabled": return String(config.feedback.soundsEnabled)
         case "feedback.start_sound": return config.feedback.startSound ?? "off"
         case "feedback.stop_sound": return config.feedback.stopSound ?? "off"
+        case "feedback.done_sound": return config.feedback.doneSound ?? "off"
         case "feedback.error_sound": return config.feedback.errorSound ?? "off"
         case "feedback.show_overlay": return String(config.feedback.showOverlay)
         case "llm.base_url": return config.llm.baseURL
@@ -122,6 +124,8 @@ public enum ConfigKeys {
             config.feedback.startSound = try soundName(value, key)
         case "feedback.stop_sound":
             config.feedback.stopSound = try soundName(value, key)
+        case "feedback.done_sound":
+            config.feedback.doneSound = try soundName(value, key)
         case "feedback.error_sound":
             config.feedback.errorSound = try soundName(value, key)
         case "feedback.show_overlay":

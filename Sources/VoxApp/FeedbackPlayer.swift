@@ -14,6 +14,7 @@ final class FeedbackPlayer {
 
     func playStart() { play(config.startSound) }
     func playStop() { play(config.stopSound) }
+    func playDone() { play(config.doneSound) }
     func playError() { play(config.errorSound) }
 
     private func play(_ name: String?) {
