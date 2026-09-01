@@ -58,14 +58,13 @@ private struct GeneralSettings: View {
 
             Section("Hotkey") {
                 Toggle("Enable global hotkey", isOn: binding(\.hotkey.enabled))
-                LabeledContent("Shortcut", value: HotkeyManager.displayString(state.config.hotkey))
+                LabeledContent("Shortcut") {
+                    HotkeyRecorderButton(state: state)
+                }
                 Picker("Activation", selection: activationBinding) {
                     Text("Press and hold").tag(HotkeyConfig.Activation.pressAndHold)
                     Text("Toggle").tag(HotkeyConfig.Activation.toggle)
                 }
-                Text("Change the key with `vox config set hotkey.key_code <code>`.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
             Section("Recording") {
@@ -199,6 +198,72 @@ private struct GeneralSettings: View {
     }
 }
 
+/// Captures the next key chord pressed while "Record new shortcut…" is
+/// active and writes it straight to `hotkey.key_code`/`hotkey.modifiers`, in
+/// place of editing them by hand with `vox config set`.
+private struct HotkeyRecorderButton: View {
+    @ObservedObject var state: AppState
+    @State private var isRecording = false
+    @State private var monitor: Any?
+    @State private var warning: String?
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            HStack {
+                Text(isRecording ? "Press the new shortcut… (Esc to cancel)" : HotkeyManager.displayString(state.config.hotkey))
+                    .foregroundStyle(isRecording ? .secondary : .primary)
+                Button(isRecording ? "Cancel" : "Record new shortcut…") {
+                    isRecording ? stopRecording() : startRecording()
+                }
+            }
+            if let warning {
+                Text(warning).font(.caption).foregroundStyle(.orange)
+            }
+        }
+        .onDisappear { stopRecording() }
+    }
+
+    private func startRecording() {
+        warning = nil
+        isRecording = true
+        // A local monitor only sees events aimed at this app, so it can't
+        // capture a chord already claimed globally by something else — but it
+        // needs no Accessibility/Input Monitoring permission, unlike a global
+        // tap, and the actual hotkey is still registered globally afterward
+        // via Carbon in HotkeyManager.
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            handle(event)
+            return nil
+        }
+    }
+
+    private func stopRecording() {
+        if let monitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        monitor = nil
+        isRecording = false
+    }
+
+    private func handle(_ event: NSEvent) {
+        // kVK_Escape, with no modifier required: always cancels.
+        if event.keyCode == 53 {
+            stopRecording()
+            return
+        }
+        let modifiers = HotkeyManager.modifierNames(event.modifierFlags)
+        guard !modifiers.isEmpty else {
+            warning = "Include at least one modifier key (⌃⌥⇧⌘)."
+            return
+        }
+        var config = state.config
+        config.hotkey.keyCode = event.keyCode
+        config.hotkey.modifiers = modifiers
+        state.save(config)
+        stopRecording()
+    }
+}
+
 private struct FeedbackSettings: View {
     @ObservedObject var state: AppState
 
@@ -304,7 +369,14 @@ private struct VocabularySettings: View {
 
 private struct ModesSettings: View {
     @ObservedObject var state: AppState
+    // Starts on the active default mode rather than nil, so the detail pane
+    // shows real content immediately instead of just "Select a mode."
     @State private var selection: String?
+
+    init(state: AppState) {
+        self.state = state
+        _selection = State(initialValue: state.config.defaultMode)
+    }
 
     var body: some View {
         HSplitView {
@@ -401,17 +473,24 @@ private struct OutputSettings: View {
 
             Section("History") {
                 Toggle("Keep a local transcript history", isOn: historyBinding)
-                LabeledContent("Entries kept") {
-                    Stepper(
-                        "\(state.config.output.sessionHistoryLimit)",
-                        value: sessionHistoryLimitBinding,
-                        in: 10...500,
-                        step: 10
-                    )
+                Toggle("Keep every entry (no limit)", isOn: sessionHistoryUnlimitedBinding)
+                if state.config.output.sessionHistoryLimit != nil {
+                    LabeledContent("Entries kept") {
+                        Stepper(
+                            "\(sessionHistoryLimitBinding.wrappedValue)",
+                            value: sessionHistoryLimitBinding,
+                            in: 10...500,
+                            step: 10
+                        )
+                    }
                 }
-                Text("Stored at ~/Library/Application Support/Vox/sessions.json, newest first.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(
+                    "Stored at ~/Library/Application Support/Vox/sessions.json, newest first, "
+                        + "with both the mode output and the raw whisper.cpp transcript for "
+                        + "each entry — useful for reviewing corrections later."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
                 Button("Clear history now") { state.clearHistory() }
                     .disabled(state.history.isEmpty)
             }
@@ -457,10 +536,21 @@ private struct OutputSettings: View {
 
     private var sessionHistoryLimitBinding: Binding<Int> {
         Binding(
-            get: { state.config.output.sessionHistoryLimit },
+            get: { state.config.output.sessionHistoryLimit ?? 50 },
             set: { newValue in
                 var config = state.config
                 config.output.sessionHistoryLimit = newValue
+                state.save(config)
+            }
+        )
+    }
+
+    private var sessionHistoryUnlimitedBinding: Binding<Bool> {
+        Binding(
+            get: { state.config.output.sessionHistoryLimit == nil },
+            set: { unlimited in
+                var config = state.config
+                config.output.sessionHistoryLimit = unlimited ? nil : 50
                 state.save(config)
             }
         )

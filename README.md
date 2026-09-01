@@ -184,9 +184,12 @@ vox config set feedback.sounds_enabled false
 vox config set feedback.show_overlay false
 ```
 
-Default hotkey is **⌥Space**, press-and-hold (switchable to toggle in Settings).
-It is registered through Carbon's `RegisterEventHotKey`, so it needs no
-Accessibility permission.
+Default hotkey is **⌃⌥Space**, press-and-hold (switchable to toggle in
+Settings). Settings → General has a "Record new shortcut…" button that
+captures the next chord you press (must include at least one modifier); the
+same key/modifiers are settable directly with `vox config set hotkey.key_code`
+and `vox config set hotkey.modifiers`. It is registered through Carbon's
+`RegisterEventHotKey`, so it needs no Accessibility permission.
 
 ## Development
 

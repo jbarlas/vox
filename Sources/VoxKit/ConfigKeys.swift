@@ -50,7 +50,8 @@ public enum ConfigKeys {
         case "recording.input_device_uid": return config.recording.inputDeviceUID ?? "default"
         case "output.destination": return config.output.destination.rawValue
         case "output.keep_session_history": return String(config.output.keepSessionHistory)
-        case "output.session_history_limit": return String(config.output.sessionHistoryLimit)
+        case "output.session_history_limit":
+            return config.output.sessionHistoryLimit.map { String($0) } ?? "off"
         case "feedback.sounds_enabled": return String(config.feedback.soundsEnabled)
         case "feedback.start_sound": return config.feedback.startSound ?? "off"
         case "feedback.stop_sound": return config.feedback.stopSound ?? "off"
@@ -114,7 +115,7 @@ public enum ConfigKeys {
         case "output.keep_session_history":
             config.output.keepSessionHistory = try bool(value, key)
         case "output.session_history_limit":
-            config.output.sessionHistoryLimit = try integer(value, key, in: 1...10_000)
+            config.output.sessionHistoryLimit = isUnset(value) ? nil : try integer(value, key, in: 1...10_000)
         case "feedback.sounds_enabled":
             config.feedback.soundsEnabled = try bool(value, key)
         case "feedback.start_sound":

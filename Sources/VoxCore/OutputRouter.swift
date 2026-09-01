@@ -24,7 +24,12 @@ public struct OutputRouter {
         if let history {
             // Best-effort: losing the session log must never fail a dictation.
             try? history.append(
-                SessionEntry(transcript: result.transcript, mode: result.mode, model: result.model)
+                SessionEntry(
+                    transcript: result.transcript,
+                    rawTranscript: result.rawTranscript,
+                    mode: result.mode,
+                    model: result.model
+                )
             )
         }
 

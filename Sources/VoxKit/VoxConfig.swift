@@ -106,6 +106,7 @@ public struct VoxConfig: Codable, Sendable, Equatable {
         try recording.validate()
         try feedback.validate()
         try hotkey.validate()
+        try output.validate()
     }
 }
 
@@ -182,11 +183,12 @@ public struct HotkeyConfig: Codable, Sendable, Equatable {
         self.enabled = enabled
     }
 
-    /// Option+Space, press-and-hold: not claimed by macOS or common editors,
-    /// and holding matches how dictation is actually used mid-thought.
+    /// Control+Option+Space, press-and-hold: not claimed by macOS or common
+    /// editors, and holding matches how dictation is actually used
+    /// mid-thought.
     public static let `default` = HotkeyConfig(
         keyCode: 49,
-        modifiers: ["option"],
+        modifiers: ["control", "option"],
         activation: .pressAndHold
     )
 
@@ -260,12 +262,14 @@ public struct OutputConfig: Codable, Sendable, Equatable {
     public var destination: Destination
     /// Keep a local session log of transcripts, clearable from the menu bar.
     public var keepSessionHistory: Bool
-    public var sessionHistoryLimit: Int
+    /// Oldest entries are dropped past this count. `nil` keeps every entry
+    /// forever (useful for building a correction/training dataset later).
+    public var sessionHistoryLimit: Int?
 
     public init(
         destination: Destination = .clipboard,
         keepSessionHistory: Bool = true,
-        sessionHistoryLimit: Int = 50
+        sessionHistoryLimit: Int? = 50
     ) {
         self.destination = destination
         self.keepSessionHistory = keepSessionHistory
@@ -273,6 +277,12 @@ public struct OutputConfig: Codable, Sendable, Equatable {
     }
 
     public static let `default` = OutputConfig()
+
+    public func validate() throws {
+        if let sessionHistoryLimit, sessionHistoryLimit <= 0 {
+            throw VoxError.config("output.session_history_limit must be greater than 0 or null")
+        }
+    }
 }
 
 /// `ModeRunner` only ever speaks the OpenAI-compatible protocol; pointing a

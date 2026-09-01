@@ -60,6 +60,22 @@ final class SessionHistoryTests: XCTestCase {
         XCTAssertTrue(try history.entries().isEmpty)
     }
 
+    func testNilLimitKeepsEveryEntry() throws {
+        let history = SessionHistory(paths: VoxPaths(supportDirectory: directory), limit: nil)
+        for index in 0..<25 {
+            try history.append(SessionEntry(transcript: "entry \(index)", mode: "raw", model: "tiny.en"))
+        }
+        XCTAssertEqual(try history.entries().count, 25)
+    }
+
+    func testRawTranscriptRoundTrips() throws {
+        let history = self.history()
+        try history.append(
+            SessionEntry(transcript: "cleaned up", rawTranscript: "uh cleaned up", mode: "cleanup", model: "tiny.en")
+        )
+        XCTAssertEqual(try history.entries().first?.rawTranscript, "uh cleaned up")
+    }
+
     func testCorruptHistoryIsTreatedAsEmpty() throws {
         let paths = VoxPaths(supportDirectory: directory)
         try paths.createSupportDirectories()
