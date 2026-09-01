@@ -47,7 +47,9 @@ vox record --output json --timeout 30
 - macOS 13 or later (Apple silicon recommended; Metal is enabled by default)
 - Xcode command line tools and `cmake` (`brew install cmake`)
 - Optional: `ffmpeg`, only for `vox transcribe` on formats AVFoundation cannot decode
-- Optional: a [LiteLLM](https://github.com/BerriAI/litellm) instance, only for LLM modes
+- Optional: an OpenAI-compatible `/v1/chat/completions` endpoint, only for LLM
+  modes — [LiteLLM](https://github.com/BerriAI/litellm) (the default) or
+  something like Ollama directly both work
 
 ## Setup
 
@@ -143,8 +145,10 @@ every key.
 
 Notable keys: `model`, `default_mode`, `language`, `vocab`, `hotkey.*`,
 `recording.max_duration_seconds`, `recording.silence_timeout_seconds`,
-`output.destination`, `feedback.*`, `llm.base_url`, `llm.model`,
-`llm.api_key_env_var`.
+`recording.silence_threshold_db`, `output.destination`,
+`output.session_history_limit` (`null`/`off` keeps every entry forever),
+`feedback.*`, `llm.base_url`, `llm.model`, `llm.api_key_env_var`,
+`llm.max_output_tokens` (`null` by default — omits the cap entirely).
 
 Vox never stores an API key: `llm.api_key_env_var` names the environment variable
 to read it from.
@@ -180,6 +184,23 @@ vox modes add bullets --prompt "Rewrite the given transcript as terse bullet poi
 vox modes test bullets "so we should probably ship the fix today and tell support"
 vox record --mode bullets
 ```
+
+### Session history
+
+Every dictation — successful or not — is logged to
+`~/Library/Application Support/Vox/sessions.json`, newest first: start/finish
+time, mode, model, stop reason, per-stage timings, both the raw whisper.cpp
+transcript and the mode output, and on failure the error code/message. It
+doubles as a correction/fine-tuning dataset, not just a clipboard safety net.
+Unbounded by default; `output.session_history_limit` caps it if you want that.
+
+```bash
+vox config set output.keep_session_history false      # turn logging off
+vox config set output.session_history_limit 200        # cap it instead of keeping everything
+```
+
+In the app, Settings → Output → History has the same controls plus "View
+session data" (opens the file) and "Clear history now".
 
 ## Menu bar app
 
