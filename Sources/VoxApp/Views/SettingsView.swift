@@ -379,6 +379,12 @@ private struct ModesSettings: View {
     }
 
     var body: some View {
+        // HSplitView sizes each pane to its own fitting height unless told
+        // otherwise, so without maxHeight: .infinity here the whole split
+        // view collapses to a few rows' worth of height and floats inside
+        // the tab's much taller, fixed 440pt content area instead of filling
+        // it — this is what looked like the content starting far down the
+        // window.
         HSplitView {
             List(state.config.modes, id: \.name, selection: $selection) { mode in
                 VStack(alignment: .leading) {
@@ -387,12 +393,13 @@ private struct ModesSettings: View {
                 }
                 .tag(mode.name)
             }
-            .frame(minWidth: 160)
+            .frame(minWidth: 160, maxHeight: .infinity)
 
             if let mode = state.config.modes.first(where: { $0.name == selection }) {
                 ModeDetail(state: state, mode: mode)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else {
-                Text("Select a mode.").foregroundStyle(.secondary).frame(maxWidth: .infinity)
+                Text("Select a mode.").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
     }
