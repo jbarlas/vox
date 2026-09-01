@@ -153,6 +153,12 @@ Notable keys: `model`, `default_mode`, `language`, `vocab`, `hotkey.*`,
 Vox never stores an API key: `llm.api_key_env_var` names the environment variable
 to read it from.
 
+`llm.base_url` may only use `http://` for a loopback host (the default
+`http://127.0.0.1:4000/v1` qualifies); anything else has to be `https://`, since
+the transcript and the API key would otherwise cross the network in cleartext.
+For a plain-HTTP LiteLLM on a network you trust,
+`vox config set llm.allow_insecure_http true` opts out.
+
 ### Custom vocabulary
 
 ```bash

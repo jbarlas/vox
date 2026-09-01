@@ -32,6 +32,7 @@ public enum ConfigKeys {
         "llm.temperature",
         "llm.timeout_seconds",
         "llm.max_output_tokens",
+        "llm.allow_insecure_http",
     ]
 
     public static func get(_ key: String, from config: VoxConfig) throws -> String {
@@ -65,6 +66,7 @@ public enum ConfigKeys {
         case "llm.temperature": return String(config.llm.temperature)
         case "llm.timeout_seconds": return String(config.llm.timeoutSeconds)
         case "llm.max_output_tokens": return config.llm.maxOutputTokens.map { String($0) } ?? "unset"
+        case "llm.allow_insecure_http": return String(config.llm.allowInsecureHTTP ?? false)
         default: throw unknownKey(key)
         }
     }
@@ -131,9 +133,9 @@ public enum ConfigKeys {
         case "feedback.show_overlay":
             config.feedback.showOverlay = try bool(value, key)
         case "llm.base_url":
-            guard URL(string: value) != nil else {
-                throw VoxError.config("llm.base_url is not a valid URL", detail: value)
-            }
+            var candidate = config.llm
+            candidate.baseURL = value
+            try candidate.validateEndpointSecurity()
             config.llm.baseURL = value
         case "llm.model":
             config.llm.model = value
@@ -145,6 +147,8 @@ public enum ConfigKeys {
             config.llm.timeoutSeconds = try number(value, key)
         case "llm.max_output_tokens":
             config.llm.maxOutputTokens = isUnset(value) ? nil : try integer(value, key, in: 1...1_000_000)
+        case "llm.allow_insecure_http":
+            config.llm.allowInsecureHTTP = try bool(value, key)
         default:
             throw unknownKey(key)
         }
