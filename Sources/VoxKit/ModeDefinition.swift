@@ -21,6 +21,14 @@ public struct ModeDefinition: Codable, Sendable, Equatable {
     public var prompt: String?
     /// Overrides `LLMConfig.model` for this mode only.
     public var model: String?
+    /// Overrides `LLMConfig.baseURL` for this mode only, so one mode can run on
+    /// a hosted provider while the rest stay on a local endpoint. Optional so
+    /// configs written before it existed still decode.
+    public var baseURL: String?
+    /// Overrides `LLMConfig.apiKeyEnvVar` for this mode only. Setting
+    /// `baseURL` without this sends no key at all rather than the global one:
+    /// see `LLMConfig.effective(for:)`.
+    public var apiKeyEnvVar: String?
     public var temperature: Double?
 
     public init(
@@ -29,6 +37,8 @@ public struct ModeDefinition: Codable, Sendable, Equatable {
         description: String? = nil,
         prompt: String? = nil,
         model: String? = nil,
+        baseURL: String? = nil,
+        apiKeyEnvVar: String? = nil,
         temperature: Double? = nil
     ) {
         self.name = name
@@ -36,7 +46,22 @@ public struct ModeDefinition: Codable, Sendable, Equatable {
         self.description = description
         self.prompt = prompt
         self.model = model
+        self.baseURL = baseURL
+        self.apiKeyEnvVar = apiKeyEnvVar
         self.temperature = temperature
+    }
+
+    /// See `RecordingConfig.CodingKeys`: the acronym has to be spelled the way
+    /// the snake_case decoder produces it, or `base_url` decodes as nothing.
+    enum CodingKeys: String, CodingKey {
+        case name
+        case kind
+        case description
+        case prompt
+        case model
+        case baseURL = "baseUrl"
+        case apiKeyEnvVar
+        case temperature
     }
 
     public func validate() throws {
@@ -47,6 +72,14 @@ public struct ModeDefinition: Codable, Sendable, Equatable {
             guard let prompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw VoxError.config("Mode '\(name)' is an llm mode but has no prompt")
             }
+        }
+        // An endpoint or key on a mode that never calls an LLM would silently
+        // do nothing, which reads as a working configuration.
+        if kind != .llm, baseURL != nil || apiKeyEnvVar != nil {
+            throw VoxError.config(
+                "Mode '\(name)' is a \(kind.rawValue) mode and cannot override an LLM endpoint",
+                detail: "\(kind.rawValue) modes never call an LLM."
+            )
         }
     }
 
