@@ -82,7 +82,7 @@ private struct GeneralSettings: View {
 
             Section {
                 Toggle("Launch at login", isOn: $launchAtLogin)
-                    .onChange(of: launchAtLogin) { _, enabled in setLaunchAtLogin(enabled) }
+                    .onChange(of: launchAtLogin) { enabled in setLaunchAtLogin(enabled) }
             }
         }
         .formStyle(.grouped)
@@ -319,7 +319,7 @@ private struct ModeDetail: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear { prompt = mode.prompt ?? "" }
-        .onChange(of: mode.name) { _, _ in prompt = mode.prompt ?? "" }
+        .onChange(of: mode.name) { _ in prompt = mode.prompt ?? "" }
     }
 
     private func savePrompt() {

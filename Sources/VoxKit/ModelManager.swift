@@ -13,7 +13,11 @@ public final class ModelManager: NSObject {
     }
 
     private let paths: VoxPaths
-    private let fileManager: FileManager
+    /// FileManager isn't Sendable in the SDK, but this instance is only ever
+    /// touched synchronously by whichever caller invokes ModelManager's
+    /// methods; the URLSessionDownloadDelegate callbacks below only touch
+    /// the separately-locked `progress` box, never this.
+    private nonisolated(unsafe) let fileManager: FileManager
     /// Boxed so the delegate callbacks can read it from an arbitrary thread
     /// without making `ModelManager` itself mutable-and-Sendable.
     private final class ProgressBox: @unchecked Sendable {

@@ -51,7 +51,7 @@ vox record --output json --timeout 30
 git clone --recurse-submodules https://github.com/jbarlas/vox.git
 cd vox
 make setup            # builds whisper.cpp + the CLI, writes a config, downloads the default model
-make install          # optional: copies the CLI to /usr/local/bin/vox
+make install          # optional: copies the CLI to your Homebrew prefix's bin/ (e.g. /opt/homebrew/bin/vox on Apple silicon, /usr/local/bin/vox on Intel); pass PREFIX=... to override
 vox permissions --request
 ```
 

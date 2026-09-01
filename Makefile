@@ -2,7 +2,12 @@
 
 SWIFT ?= swift
 MODEL ?= small.en
-PREFIX ?= /usr/local
+# /usr/local is Homebrew's own prefix (and thus user-writable) on Intel, but
+# on Apple Silicon Homebrew lives at /opt/homebrew and /usr/local is left
+# root-owned, so `make install` fails without sudo. Match whichever prefix
+# Homebrew is actually using; fall back to /usr/local when Homebrew isn't
+# installed.
+PREFIX ?= $(shell brew --prefix 2>/dev/null || echo /usr/local)
 CONFIGURATION ?= release
 VOX := .build/$(CONFIGURATION)/vox
 WHISPER_LIB := vendor/whisper.cpp/install/lib/libvox-whisper.a

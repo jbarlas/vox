@@ -2,6 +2,7 @@ import AppKit
 import VoxCore
 import VoxKit
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItemController: StatusItemController?
     private var hotkeyManager: HotkeyManager?
