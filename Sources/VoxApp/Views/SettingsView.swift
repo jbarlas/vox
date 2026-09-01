@@ -370,6 +370,7 @@ private struct ModesSettings: View {
     // Starts on the active default mode rather than nil, so the detail pane
     // shows real content immediately instead of just "Select a mode."
     @State private var selection: String?
+    @State private var error: String?
 
     init(state: AppState) {
         self.state = state
