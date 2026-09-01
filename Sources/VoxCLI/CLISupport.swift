@@ -28,7 +28,11 @@ extension VoxError {
 
 /// Converts any thrown error into a `VoxError` and then into an `ExitCode`,
 /// which is how the CLI keeps its exit-status contract with agent harnesses.
-func exitCode(for error: Error) -> ExitCode {
+///
+/// Named `voxExitCode` (not `exitCode`) to avoid colliding with
+/// `ParsableArguments.exitCode(for:)`, which every command struct inherits
+/// as a static member of the same name and signature.
+func voxExitCode(for error: Error) -> ExitCode {
     ExitCode(voxError(from: error).exitCode)
 }
 

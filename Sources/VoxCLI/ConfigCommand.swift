@@ -34,7 +34,7 @@ struct ConfigCommand: AsyncParsableCommand {
                 )
             } catch {
                 voxError(from: error).printToStderr()
-                throw exitCode(for: error)
+                throw voxExitCode(for: error)
             }
         }
     }
@@ -52,7 +52,7 @@ struct ConfigCommand: AsyncParsableCommand {
                 Stdout.write(try ConfigKeys.get(key, from: try configOptions.loadConfig()))
             } catch {
                 voxError(from: error).printToStderr()
-                throw exitCode(for: error)
+                throw voxExitCode(for: error)
             }
         }
     }
@@ -77,7 +77,7 @@ struct ConfigCommand: AsyncParsableCommand {
                 Stdout.write(try ConfigKeys.get(key, from: updated))
             } catch {
                 voxError(from: error).printToStderr()
-                throw exitCode(for: error)
+                throw voxExitCode(for: error)
             }
         }
     }
@@ -104,7 +104,7 @@ struct ConfigCommand: AsyncParsableCommand {
                 }
             } catch {
                 voxError(from: error).printToStderr()
-                throw exitCode(for: error)
+                throw voxExitCode(for: error)
             }
         }
     }
@@ -169,7 +169,7 @@ struct ConfigCommand: AsyncParsableCommand {
                 }
             } catch {
                 voxError(from: error).printToStderr()
-                throw exitCode(for: error)
+                throw voxExitCode(for: error)
             }
         }
 

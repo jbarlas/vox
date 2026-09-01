@@ -1,8 +1,6 @@
 .build/
 .swiftpm/
 dist/
-vendor/whisper.cpp/build/
-vendor/whisper.cpp/install/
 vendor/bin/
 *.xcodeproj
 .DS_Store

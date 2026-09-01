@@ -67,7 +67,7 @@ struct Models: AsyncParsableCommand {
                 Stdout.write(url.path)
             } catch {
                 voxError(from: error).printToStderr()
-                throw exitCode(for: error)
+                throw voxExitCode(for: error)
             }
         }
     }
@@ -91,7 +91,7 @@ struct Models: AsyncParsableCommand {
                 Stdout.write(updated.model)
             } catch {
                 voxError(from: error).printToStderr()
-                throw exitCode(for: error)
+                throw voxExitCode(for: error)
             }
         }
     }
@@ -113,7 +113,7 @@ struct Models: AsyncParsableCommand {
                 Stderr.write("Removed \(whisperModel.id).")
             } catch {
                 voxError(from: error).printToStderr()
-                throw exitCode(for: error)
+                throw voxExitCode(for: error)
             }
         }
     }

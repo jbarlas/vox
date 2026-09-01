@@ -26,7 +26,7 @@ struct Modes: AsyncParsableCommand {
                 }
             } catch {
                 voxError(from: error).printToStderr()
-                throw exitCode(for: error)
+                throw voxExitCode(for: error)
             }
         }
     }
@@ -47,7 +47,7 @@ struct Modes: AsyncParsableCommand {
                 Stdout.write(try VoxJSON.string(mode, pretty: true))
             } catch {
                 voxError(from: error).printToStderr()
-                throw exitCode(for: error)
+                throw voxExitCode(for: error)
             }
         }
     }
@@ -105,7 +105,7 @@ struct Modes: AsyncParsableCommand {
                 Stderr.write("Defined mode '\(name)'.")
             } catch {
                 voxError(from: error).printToStderr()
-                throw exitCode(for: error)
+                throw voxExitCode(for: error)
             }
         }
     }
@@ -135,7 +135,7 @@ struct Modes: AsyncParsableCommand {
                 Stderr.write("Removed mode '\(name)'.")
             } catch {
                 voxError(from: error).printToStderr()
-                throw exitCode(for: error)
+                throw voxExitCode(for: error)
             }
         }
     }
@@ -159,7 +159,7 @@ struct Modes: AsyncParsableCommand {
                 Stdout.write(updated.defaultMode)
             } catch {
                 voxError(from: error).printToStderr()
-                throw exitCode(for: error)
+                throw voxExitCode(for: error)
             }
         }
     }
@@ -194,7 +194,7 @@ struct Modes: AsyncParsableCommand {
                 Stdout.write(result.text)
             } catch {
                 voxError(from: error).printToStderr()
-                throw exitCode(for: error)
+                throw voxExitCode(for: error)
             }
         }
     }
