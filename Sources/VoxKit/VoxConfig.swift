@@ -82,6 +82,7 @@ public struct VoxConfig: Codable, Sendable, Equatable {
     /// the same edits, rather than the UI discovering them from a failed save.
     public mutating func setMode(_ mode: ModeDefinition, replacing existingName: String? = nil) throws {
         try mode.validate()
+        try validateEndpoint(of: mode)
         let previousName = existingName ?? mode.name
         let isRename = previousName.caseInsensitiveCompare(mode.name) != .orderedSame
         if isRename, self.mode(named: mode.name) != nil {
@@ -126,6 +127,13 @@ public struct VoxConfig: Codable, Sendable, Equatable {
         modes.firstIndex { $0.name.caseInsensitiveCompare(name) == .orderedSame }
     }
 
+    /// A mode's endpoint override is held to the same cleartext rule as the
+    /// global one — a per-mode field must not become a way around it.
+    private func validateEndpoint(of mode: ModeDefinition) throws {
+        guard mode.baseURL != nil else { return }
+        try llm.effective(for: mode).validateEndpointSecurity(label: "Mode '\(mode.name)' base_url")
+    }
+
     /// Rejects documents that would fail confusingly deeper in the pipeline.
     public func validate() throws {
         guard schemaVersion <= VoxConfig.currentSchemaVersion else {
@@ -153,6 +161,7 @@ public struct VoxConfig: Codable, Sendable, Equatable {
                 throw VoxError.config("Duplicate mode name '\(mode.name)'")
             }
             try mode.validate()
+            try validateEndpoint(of: mode)
         }
         try recording.validate()
         try feedback.validate()

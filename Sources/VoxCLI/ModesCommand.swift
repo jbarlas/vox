@@ -58,8 +58,9 @@ struct Modes: AsyncParsableCommand {
             discussion: """
                 The prompt becomes the system prompt sent to the configured \
                 OpenAI-compatible endpoint (LiteLLM by default). Point a mode at a \
-                different model with --model; whether that model is local or remote \
-                is LiteLLM's routing decision, not Vox's.
+                different model with --model, or at a different endpoint entirely \
+                with --provider (or --base-url plus --api-key-env) — so one mode can \
+                run on a hosted provider while the rest stay on the local endpoint.
                 """
         )
 
@@ -73,6 +74,23 @@ struct Modes: AsyncParsableCommand {
 
         @Option(help: "Model name passed to the LLM endpoint, overriding llm.model.")
         var model: String?
+
+        @Option(
+            name: .customLong("provider"),
+            help: "Run this mode on a known provider instead of llm.base_url "
+                + "(\(LLMProviderCatalog.all.map(\.id).joined(separator: ", ")))."
+        )
+        var provider: String?
+
+        @Option(help: "OpenAI-compatible endpoint for this mode only, overriding llm.base_url.")
+        var baseURL: String?
+
+        @Option(
+            name: .customLong("api-key-env"),
+            help: "Environment variable holding this mode's API key. Required for a "
+                + "remote --base-url: the global llm.api_key_env_var is not forwarded to it."
+        )
+        var apiKeyEnv: String?
 
         @Option(help: "Sampling temperature for this mode.")
         var temperature: Double?
@@ -89,12 +107,28 @@ struct Modes: AsyncParsableCommand {
                 } else {
                     promptText = prompt
                 }
+                var endpoint: String? = baseURL
+                var keyEnvVar: String? = apiKeyEnv
+                if let provider {
+                    guard let preset = LLMProviderCatalog.provider(id: provider) else {
+                        throw VoxError.config(
+                            "Unknown provider '\(provider)'",
+                            detail: "Known providers: "
+                                + LLMProviderCatalog.all.map(\.id).joined(separator: ", ")
+                                + ". Use --base-url and --api-key-env for anything else."
+                        )
+                    }
+                    endpoint = baseURL ?? preset.baseURL
+                    keyEnvVar = apiKeyEnv ?? preset.apiKeyEnvVar
+                }
                 let mode = ModeDefinition(
                     name: name,
                     kind: .llm,
                     description: description,
                     prompt: promptText,
                     model: model,
+                    baseURL: endpoint,
+                    apiKeyEnvVar: keyEnvVar,
                     temperature: temperature
                 )
                 _ = try configOptions.store.update { config in
