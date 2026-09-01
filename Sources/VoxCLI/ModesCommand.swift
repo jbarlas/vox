@@ -77,8 +77,10 @@ struct Modes: AsyncParsableCommand {
 
         @Option(
             name: .customLong("provider"),
-            help: "Run this mode on a known provider instead of llm.base_url "
-                + "(\(LLMProviderCatalog.all.map(\.id).joined(separator: ", ")))."
+            help: ArgumentHelp(
+                "Run this mode on a known provider instead of llm.base_url "
+                    + "(\(LLMProviderCatalog.all.map(\.id).joined(separator: ", ")))."
+            )
         )
         var provider: String?
 
@@ -87,8 +89,10 @@ struct Modes: AsyncParsableCommand {
 
         @Option(
             name: .customLong("api-key-env"),
-            help: "Environment variable holding this mode's API key. Required for a "
-                + "remote --base-url: the global llm.api_key_env_var is not forwarded to it."
+            help: ArgumentHelp(
+                "Environment variable holding this mode's API key. Required for a "
+                    + "remote --base-url: the global llm.api_key_env_var is not forwarded to it."
+            )
         )
         var apiKeyEnv: String?
 
