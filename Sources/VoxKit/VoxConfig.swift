@@ -138,7 +138,7 @@ public struct FeedbackConfig: Codable, Sendable, Equatable {
 
     public init(
         soundsEnabled: Bool = true,
-        startSound: String? = "Ping",
+        startSound: String? = "Tink",
         stopSound: String? = "Pop",
         doneSound: String? = "Glass",
         errorSound: String? = "Basso",
