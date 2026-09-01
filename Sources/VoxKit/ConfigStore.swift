@@ -3,7 +3,9 @@ import Foundation
 /// Reads and writes the shared config document.
 ///
 /// Writes are atomic so a menu bar app save can never leave a half-written file
-/// for a concurrently running `vox record`.
+/// for a concurrently running `vox record`, and read-modify-write cycles
+/// (`update`, `withLock`) hold a cross-process lock so the app and the CLI
+/// cannot clobber each other's changes.
 public final class ConfigStore {
     public let paths: VoxPaths
     private let fileManager: FileManager
@@ -113,10 +115,22 @@ public final class ConfigStore {
         return true
     }
 
+    /// Runs `body` while holding the cross-process config lock, so a
+    /// load-mutate-save sequence spread over several calls (the app's Settings
+    /// path, which also has to handle an unreadable file) cannot interleave
+    /// with a `vox config set` in another process.
+    ///
+    /// Reentrant: `update` and `save` may be called inside `body`.
+    public func withLock<T>(_ body: () throws -> T) throws -> T {
+        try FileLock.withLock(at: paths.configLockFile, body)
+    }
+
     public func update(_ mutate: (inout VoxConfig) throws -> Void) throws -> VoxConfig {
-        var config = try load()
-        try mutate(&config)
-        try save(config)
-        return config
+        try withLock {
+            var config = try load()
+            try mutate(&config)
+            try save(config)
+            return config
+        }
     }
 }
