@@ -6,17 +6,22 @@ import PackageDescription
 // a Mac. The macOS-only targets (`VoxCore`, `VoxCLI`, `VoxApp`) are added only
 // when building on macOS.
 #if os(macOS)
+// Every target that imports `CWhisper` — directly, or transitively through
+// `VoxCore` — has to be able to find whisper.h, or Swift fails to build the
+// module whenever it is compiled without `VoxCore` in the same invocation
+// (e.g. `make app` right after `make whisper` rewrote the headers).
+// Relative paths resolve against the working directory of `swift build`, so
+// all builds must be driven from the repo root (the Makefile always is).
+let whisperHeaderSearchPath: [SwiftSetting] = [
+    .unsafeFlags(["-Xcc", "-Ivendor/whisper.cpp/install/include"])
+]
+
 let macOSTargets: [Target] = [
     .systemLibrary(name: "CWhisper", path: "Sources/CWhisper"),
     .target(
         name: "VoxCore",
         dependencies: ["VoxKit", "CWhisper"],
-        // Relative paths resolve against the working directory of `swift
-        // build`, so all builds must be driven from the repo root (the
-        // Makefile always is).
-        swiftSettings: [
-            .unsafeFlags(["-Xcc", "-Ivendor/whisper.cpp/install/include"])
-        ],
+        swiftSettings: whisperHeaderSearchPath,
         linkerSettings: [
             // `make whisper` (scripts/build-whisper.sh) installs a single
             // merged static archive here so this flag list never has to track
@@ -36,11 +41,13 @@ let macOSTargets: [Target] = [
             "VoxCore",
             "VoxKit",
             .product(name: "ArgumentParser", package: "swift-argument-parser"),
-        ]
+        ],
+        swiftSettings: whisperHeaderSearchPath
     ),
     .executableTarget(
         name: "VoxApp",
-        dependencies: ["VoxCore", "VoxKit"]
+        dependencies: ["VoxCore", "VoxKit"],
+        swiftSettings: whisperHeaderSearchPath
     ),
 ]
 let macOSProducts: [Product] = [

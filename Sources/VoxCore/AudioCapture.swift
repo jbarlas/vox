@@ -258,12 +258,16 @@ public final class AudioCapture: NSObject {
                 mScope: kAudioObjectPropertyScopeGlobal,
                 mElement: kAudioObjectPropertyElementMain
             )
-            var value: CFString?
-            var valueSize = UInt32(MemoryLayout<CFString?>.size)
+            // CoreAudio hands back a +1 CFString here, so it has to come out
+            // through Unmanaged: a bare `CFString?` makes Swift pass a pointer
+            // to a managed reference and leaves ownership ambiguous.
+            var value: Unmanaged<CFString>?
+            var valueSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
             guard
                 AudioObjectGetPropertyData(device, &uidAddress, 0, nil, &valueSize, &value) == noErr,
-                let value, value as String == uid
+                let value
             else { continue }
+            guard value.takeRetainedValue() as String == uid else { continue }
             return device
         }
         return nil
