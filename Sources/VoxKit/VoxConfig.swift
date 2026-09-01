@@ -75,6 +75,57 @@ public struct VoxConfig: Codable, Sendable, Equatable {
         ModelCatalog.model(id: model)
     }
 
+    /// Adds `mode`, or replaces the one currently named `existingName` — which
+    /// is how a rename is expressed, since a mode is identified by its name.
+    ///
+    /// Shared by `vox modes add` and the app's Modes settings so both reject
+    /// the same edits, rather than the UI discovering them from a failed save.
+    public mutating func setMode(_ mode: ModeDefinition, replacing existingName: String? = nil) throws {
+        try mode.validate()
+        let previousName = existingName ?? mode.name
+        let isRename = previousName.caseInsensitiveCompare(mode.name) != .orderedSame
+        if isRename, self.mode(named: mode.name) != nil {
+            throw VoxError.config("A mode named '\(mode.name)' already exists")
+        }
+        if let index = index(ofModeNamed: previousName) {
+            modes[index] = mode
+        } else {
+            modes.append(mode)
+        }
+        // `defaultMode` refers to a mode by name, so a rename that didn't
+        // follow it here would leave a config that no longer validates.
+        if defaultMode.caseInsensitiveCompare(previousName) == .orderedSame {
+            defaultMode = mode.name
+        }
+    }
+
+    public mutating func removeMode(named name: String) throws {
+        guard let index = index(ofModeNamed: name) else {
+            throw VoxError.config("Unknown mode '\(name)'")
+        }
+        guard defaultMode.caseInsensitiveCompare(name) != .orderedSame else {
+            throw VoxError.config(
+                "Cannot remove '\(name)' while it is the default mode",
+                detail: "Make another mode the default first."
+            )
+        }
+        modes.remove(at: index)
+    }
+
+    /// `base`, or `base 2`, `base 3`… — whichever is free.
+    public func unusedModeName(basedOn base: String) -> String {
+        guard mode(named: base) != nil else { return base }
+        var suffix = 2
+        while mode(named: "\(base) \(suffix)") != nil {
+            suffix += 1
+        }
+        return "\(base) \(suffix)"
+    }
+
+    private func index(ofModeNamed name: String) -> Int? {
+        modes.firstIndex { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+    }
+
     /// Rejects documents that would fail confusingly deeper in the pipeline.
     public func validate() throws {
         guard schemaVersion <= VoxConfig.currentSchemaVersion else {

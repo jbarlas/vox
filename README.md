@@ -168,7 +168,7 @@ itself rather than being search-and-replaced afterwards.
 - `raw` — the transcript, untouched
 - `cleanup` — local rule-based filler and stutter removal, no network
 - `prompt`, `email` — built-in LLM modes
-- your own — `vox modes add <name> --prompt "..."`
+- your own — Settings → Modes (`+`), or `vox modes add <name> --prompt "..."`
 
 A mode's prompt is the system message; the transcript arrives as the user
 message wrapped in `<transcript>…</transcript>`, which keeps a small model from
@@ -207,7 +207,9 @@ session data" (opens the file) and "Clear history now".
 `dist/Vox.app` runs as a menu bar item (no Dock icon). The icon reflects idle,
 recording, and transcribing; the popover has start/stop, a level meter, the mode
 picker, and the last transcript; Settings covers model, language, hotkey,
-recording limits, vocabulary, modes, output, and feedback.
+recording limits, vocabulary, modes, output, and feedback. Settings → Modes
+creates, renames, edits, and deletes modes; a new mode starts from a prompt
+skeleton that already has the `<transcript>` framing described above.
 
 While recording, a click-through waveform strip floats under the menu bar (on
 whichever screen the pointer is on), and Vox plays a stock macOS sound for four
