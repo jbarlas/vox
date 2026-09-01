@@ -32,6 +32,9 @@ struct RecordOptions: ParsableArguments {
 
     @Flag(name: .shortAndLong, help: "Suppress progress messages on stderr.")
     var quiet = false
+
+    @Flag(name: .shortAndLong, help: "Also print whisper.cpp's own native logs to stderr.")
+    var verbose = false
 }
 
 extension OutputConfig.Destination: ExpressibleByArgument {
@@ -99,6 +102,9 @@ struct RecordRunner {
     let inputFile: URL?
 
     func run() async throws {
+        // Before anything can reach whisper.cpp: the callbacks are global and
+        // whisper.cpp logs from its very first call.
+        WhisperLogging.configure(verbose: options.verbose)
         let startedAt = Date()
         // Resolved before anything can fail so a failure is reported in the
         // shape the caller will parse — which config selects just as much as
