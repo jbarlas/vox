@@ -219,6 +219,14 @@ public enum ConfigKeys {
                 detail: "Expected any of: \(knownModifiers.sorted().joined(separator: ", "))"
             )
         }
+        // A hotkey with no modifier would register the bare key globally and
+        // intercept ordinary typing, so require at least one.
+        guard !parts.isEmpty else {
+            throw VoxError.config(
+                "A hotkey needs at least one modifier",
+                detail: "Expected any of: \(knownModifiers.sorted().joined(separator: ", "))"
+            )
+        }
         return parts
     }
 }

@@ -64,8 +64,13 @@ public final class WhisperEngine: TranscriptionEngine {
 
     /// Drops the cached context and its GPU buffers. The app calls this when
     /// the user switches models or the app goes idle.
+    ///
+    /// Serialized on `queue` so it can never free the context out from under an
+    /// in-flight `whisper_full`: `context(forModelAt:)` returns the pointer and
+    /// releases its lock before the call uses it, so releasing on any other
+    /// thread would be a use-after-free.
     public func unloadModel() {
-        cache.release()
+        queue.sync { cache.release() }
     }
 
     public func transcribe(_ request: TranscriptionRequest) async throws -> TranscriptionResult {

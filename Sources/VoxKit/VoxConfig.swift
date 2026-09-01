@@ -208,6 +208,14 @@ public struct HotkeyConfig: Codable, Sendable, Equatable {
                 detail: "Supported: \(Self.supportedModifiers.sorted().joined(separator: ", "))"
             )
         }
+        // A bare key (no modifier) would register globally and swallow ordinary
+        // typing, so reject it when the hotkey is enabled.
+        guard !enabled || !modifiers.isEmpty else {
+            throw VoxError.config(
+                "An enabled hotkey needs at least one modifier",
+                detail: "Supported: \(Self.supportedModifiers.sorted().joined(separator: ", "))"
+            )
+        }
     }
 }
 

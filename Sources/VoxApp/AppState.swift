@@ -76,12 +76,22 @@ final class AppState: ObservableObject {
     func save(_ mutate: (inout VoxConfig) -> Void) {
         do {
             // Defaults must not quietly replace a config we only failed to
-            // parse: keep the user's file, under another name.
+            // parse. Re-read first: if the file was repaired externally since
+            // launch, load it and keep the user's settings; only quarantine a
+            // file that is still unreadable.
+            var fresh: VoxConfig
             if configLoadError != nil {
-                try store.quarantineUnreadableFile()
-                configLoadError = nil
+                if let repaired = try? store.load() {
+                    fresh = repaired
+                    configLoadError = nil
+                } else {
+                    try store.quarantineUnreadableFile()
+                    configLoadError = nil
+                    fresh = config
+                }
+            } else {
+                fresh = (try? store.load()) ?? config
             }
-            var fresh = (try? store.load()) ?? config
             mutate(&fresh)
             try store.save(fresh)
             config = fresh
