@@ -290,24 +290,17 @@ private struct FeedbackSettings: View {
         .formStyle(.grouped)
     }
 
-    /// Its own on/off toggle per event, independent of the master "Play
-    /// sounds" switch above — re-enabling restores that event's stock
-    /// default sound rather than leaving the picker on a stale selection.
     private func soundPicker(
         _ label: String,
         keyPath: WritableKeyPath<VoxConfig, String?>
     ) -> some View {
         HStack {
-            Toggle(label, isOn: soundEnabledBinding(keyPath))
-            Spacer()
-            Picker("", selection: soundBinding(keyPath)) {
+            Picker(label, selection: soundBinding(keyPath)) {
+                Text("None").tag("")
                 ForEach(FeedbackConfig.systemSoundNames, id: \.self) { name in
                     Text(name).tag(name)
                 }
             }
-            .labelsHidden()
-            .frame(maxWidth: 140)
-            .disabled(state.config[keyPath: keyPath] == nil)
             Button {
                 if let name = state.config[keyPath: keyPath] { NSSound(named: name)?.play() }
             } label: {
@@ -316,16 +309,6 @@ private struct FeedbackSettings: View {
             .buttonStyle(.borderless)
             .disabled(state.config[keyPath: keyPath] == nil)
         }
-    }
-
-    private func soundEnabledBinding(_ keyPath: WritableKeyPath<VoxConfig, String?>) -> Binding<Bool> {
-        Binding(
-            get: { state.config[keyPath: keyPath] != nil },
-            set: { enabled in
-                let restoreName = VoxConfig()[keyPath: keyPath]
-                state.save { $0[keyPath: keyPath] = enabled ? (restoreName ?? "Tink") : nil }
-            }
-        )
     }
 
     private func soundBinding(_ keyPath: WritableKeyPath<VoxConfig, String?>) -> Binding<String> {
@@ -441,10 +424,6 @@ private struct ModeDetail: View {
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                HStack {
-                    Spacer()
-                    Button("Save prompt") { savePrompt() }
-                }
             } else {
                 Text(
                     "Built-in mode with no prompt: \(mode.kind == .raw ? "returns the transcript untouched" : "applies local rule-based cleanup")."
@@ -452,13 +431,24 @@ private struct ModeDetail: View {
                 .font(.callout)
             }
 
-            Button("Make default") { makeDefault() }
-                .disabled(state.config.defaultMode == mode.name)
+            HStack {
+                Button("Make default") { makeDefault() }
+                    .disabled(state.config.defaultMode == mode.name)
+                if mode.kind == .llm {
+                    Spacer()
+                    Button("Save prompt") { savePrompt() }
+                }
+            }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear { prompt = mode.prompt ?? "" }
         .onChange(of: mode.name) { _ in prompt = mode.prompt ?? "" }
+        // Belt-and-suspenders alongside onChange above: .task(id:) is a
+        // second, independently-triggered mechanism for "resync local state
+        // when this identifier changes" that's sometimes more reliable than
+        // onChange for this exact pattern in an AppKit-hosted SwiftUI view.
+        .task(id: mode.name) { prompt = mode.prompt ?? "" }
     }
 
     private func savePrompt() {

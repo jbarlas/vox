@@ -244,4 +244,6 @@ is what the test suite covers. `VoxCore` holds the macOS-only pipeline (audio
 capture, whisper.cpp bridge, output routing); `VoxCLI` and `VoxApp` are thin
 front-ends over it — neither wraps the other.
 
-Not implemented yet: voice commands and live streaming transcription.
+Not implemented yet: voice commands and live streaming transcription. Deferred
+feature work is tracked as [`feature`-labeled
+issues](https://github.com/jbarlas/vox/issues?q=is%3Aissue+is%3Aopen+label%3Afeature).
