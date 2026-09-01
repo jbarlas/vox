@@ -4,12 +4,108 @@
 
 # Vox
 
-Local, offline speech-to-text for macOS: a menu bar app and a CLI over one shared
-core, built directly on [whisper.cpp](https://github.com/ggerganov/whisper.cpp).
+Local, offline speech-to-text for macOS: a menu bar app you dictate into with a
+hotkey, plus a CLI over the same core, built directly on
+[whisper.cpp](https://github.com/ggerganov/whisper.cpp).
 
-Audio never leaves the machine. The CLI is headless — it does not need the app to
-be running — and can emit a single JSON object on stdout, which is the intended
-way for an agent to use it: no clipboard, no GUI, no Accessibility permission.
+Audio never leaves the machine. Hold **⌃⌥Space** anywhere, talk, let go, and the
+transcript is on your clipboard — optionally cleaned up or rewritten first by a
+local LLM.
+
+The CLI is the same pipeline without the GUI, for scripting and for agents that
+want a transcript as JSON on stdout; it does not need the app to be running.
+
+## Requirements
+
+- macOS 13 or later (Apple silicon recommended; Metal is enabled by default)
+- Xcode command line tools and `cmake` (`brew install cmake`)
+- Optional: `ffmpeg`, only for `vox transcribe` on formats AVFoundation cannot decode
+- Optional: an OpenAI-compatible `/v1/chat/completions` endpoint, only for LLM
+  modes — [LiteLLM](https://github.com/BerriAI/litellm) (the default) or
+  something like Ollama directly both work
+
+## Setup
+
+```bash
+git clone --recurse-submodules https://github.com/jbarlas/vox.git
+cd vox
+make setup            # builds whisper.cpp + the CLI, writes a config, downloads the default model
+make app              # builds dist/Vox.app
+make install          # optional: copies the CLI to your Homebrew prefix's bin/ (e.g. /opt/homebrew/bin/vox on Apple silicon, /usr/local/bin/vox on Intel); pass PREFIX=... to override
+vox permissions --request
+```
+
+`make setup` is non-interactive. It installs `small.en` (~466 MB), a good
+latency/accuracy tradeoff for dictation; swap it any time:
+
+```bash
+make setup MODEL=large-v3-turbo-q5_0   # at setup time
+vox models list                        # see everything, and what is installed
+vox models download large-v3-turbo     # fetch another one
+vox models set large-v3-turbo          # and use it (also in Settings → General)
+```
+
+`make sign` ad-hoc signs the app (set `DEVELOPER_ID` for a distributable build)
+and `make notarize` submits it to Apple. `make brew-formula` writes a
+build-from-source formula to `dist/vox.rb` for a tap.
+
+The bundle also carries the CLI at `Vox.app/Contents/MacOS/vox-cli`, so an
+app-only install (drag `Vox.app` to `/Applications`, no `make install`) can
+still expose `vox` on your `PATH`:
+
+```bash
+ln -s /Applications/Vox.app/Contents/MacOS/vox-cli /opt/homebrew/bin/vox
+```
+
+## Menu bar app
+
+`dist/Vox.app` runs as a menu bar item (no Dock icon). The icon reflects idle,
+recording, and transcribing; the popover has start/stop, a level meter, the mode
+picker, and the last transcript; Settings covers model, language, hotkey,
+recording limits, vocabulary, modes, output, and feedback.
+
+Default hotkey is **⌃⌥Space**, press-and-hold (switchable to toggle in
+Settings). Settings → General has a "Record new shortcut…" button that
+captures the next chord you press (must include at least one modifier); the
+same key/modifiers are settable directly with `vox config set hotkey.key_code`
+and `vox config set hotkey.modifiers`. It is registered through Carbon's
+`RegisterEventHotKey`, so it needs no Accessibility permission.
+
+While recording, a click-through waveform strip floats under the menu bar (on
+whichever screen the pointer is on), and stock macOS sounds mark four events:
+recording started, recording stopped, dictation finished, and failure. The
+overlay and each sound are configurable in Settings → Feedback, or under
+`feedback.*` via `vox config set`.
+
+## CLI
+
+| Command | Purpose |
+| --- | --- |
+| `vox record` | Record from the microphone and transcribe |
+| `vox transcribe <file>` | Transcribe an existing audio file |
+| `vox config get/set/list` | Read and edit the shared config |
+| `vox config vocab` | Manage custom vocabulary |
+| `vox models list/download/set/remove` | Manage whisper models |
+| `vox modes list/add/remove/set-default/test` | Manage post-processing modes |
+| `vox permissions` | Check microphone and Accessibility access |
+
+Recording options: `--mode`, `--model`, `--language`, `--output`, `--timeout`,
+`--save-audio`, `--pretty`, `--quiet`, `--verbose` (adds whisper.cpp's own
+native logging, which is otherwise silenced).
+
+Recording stops on trailing silence, on `--timeout`, at
+`recording.max_duration_seconds`, or on the first Ctrl+C (a second one aborts).
+
+### Output destinations
+
+`--output` accepts `clipboard` (default), `auto-paste`, `stdout`, `json`, `none`.
+Only `auto-paste` needs Accessibility permission. Progress messages always go to
+stderr, so stdout carries the transcript or the JSON envelope and nothing else.
+
+### For agents
+
+Run `vox record --output json --timeout <secs>` as a subprocess and parse
+stdout. No clipboard, no GUI, no Accessibility permission:
 
 ```bash
 vox record --output json --timeout 30
@@ -42,78 +138,8 @@ vox record --output json --timeout 30
 }
 ```
 
-## Requirements
-
-- macOS 13 or later (Apple silicon recommended; Metal is enabled by default)
-- Xcode command line tools and `cmake` (`brew install cmake`)
-- Optional: `ffmpeg`, only for `vox transcribe` on formats AVFoundation cannot decode
-- Optional: an OpenAI-compatible `/v1/chat/completions` endpoint, only for LLM
-  modes — [LiteLLM](https://github.com/BerriAI/litellm) (the default) or
-  something like Ollama directly both work
-
-## Setup
-
-```bash
-git clone --recurse-submodules https://github.com/jbarlas/vox.git
-cd vox
-make setup            # builds whisper.cpp + the CLI, writes a config, downloads the default model
-make install          # optional: copies the CLI to your Homebrew prefix's bin/ (e.g. /opt/homebrew/bin/vox on Apple silicon, /usr/local/bin/vox on Intel); pass PREFIX=... to override
-vox permissions --request
-```
-
-`make setup` is non-interactive. It installs `small.en` (~466 MB), a good
-latency/accuracy tradeoff for dictation; swap it any time:
-
-```bash
-make setup MODEL=large-v3-turbo-q5_0   # at setup time
-vox models list                        # see everything, and what is installed
-vox models download large-v3-turbo     # fetch another one
-vox models set large-v3-turbo          # and use it (also in Settings → General)
-```
-
-Build the menu bar app with `make app`, which produces `dist/Vox.app`; `make sign`
-ad-hoc signs it (set `DEVELOPER_ID` for a distributable build) and `make notarize`
-submits it to Apple. `make brew-formula` writes a build-from-source formula to
-`dist/vox.rb` for a tap.
-
-The bundle also carries the CLI at `Vox.app/Contents/MacOS/vox-cli`, so an
-app-only install (drag `Vox.app` to `/Applications`, no `make install`) can
-still expose `vox` on your `PATH`:
-
-```bash
-ln -s /Applications/Vox.app/Contents/MacOS/vox-cli /opt/homebrew/bin/vox
-```
-
-## CLI
-
-| Command | Purpose |
-| --- | --- |
-| `vox record` | Record from the microphone and transcribe |
-| `vox transcribe <file>` | Transcribe an existing audio file |
-| `vox config get/set/list` | Read and edit the shared config |
-| `vox config vocab` | Manage custom vocabulary |
-| `vox models list/download/set/remove` | Manage whisper models |
-| `vox modes list/add/remove/set-default/test` | Manage post-processing modes |
-| `vox permissions` | Check microphone and Accessibility access |
-
-Recording options: `--mode`, `--model`, `--language`, `--output`, `--timeout`,
-`--save-audio`, `--pretty`, `--quiet`, `--verbose` (adds whisper.cpp's own
-native logging, which is otherwise silenced).
-
-Recording stops on trailing silence, on `--timeout`, at
-`recording.max_duration_seconds`, or on the first Ctrl+C (a second one aborts).
-
-### Output destinations
-
-`--output` accepts `clipboard` (default), `auto-paste`, `stdout`, `json`, `none`.
-Only `auto-paste` needs Accessibility permission. Progress messages always go to
-stderr, so stdout carries the transcript or the JSON envelope and nothing else.
-
-### For agents
-
-Run `vox record --output json --timeout <secs>` as a subprocess and parse stdout.
-Failures are reported the same way — `ok: false` with a stable `error.code` — and
-the exit code is nonzero:
+Failures are reported the same way — `ok: false` with a stable `error.code` —
+and the exit code is nonzero:
 
 | Code | Exit | Meaning |
 | --- | --- | --- |
@@ -153,6 +179,12 @@ Notable keys: `model`, `default_mode`, `language`, `vocab`, `hotkey.*`,
 
 Vox never stores an API key: `llm.api_key_env_var` names the environment variable
 to read it from.
+
+`llm.base_url` may only use `http://` for a loopback host (the default
+`http://127.0.0.1:4000/v1` qualifies); anything else has to be `https://`, since
+the transcript and the API key would otherwise cross the network in cleartext.
+For a plain-HTTP LiteLLM on a network you trust,
+`vox config set llm.allow_insecure_http true` opts out.
 
 ### Custom vocabulary
 
@@ -202,35 +234,6 @@ vox config set output.session_history_limit 200        # cap it instead of keepi
 
 In the app, Settings → Output → History has the same controls plus "View
 session data" (opens the file) and "Clear history now".
-
-## Menu bar app
-
-`dist/Vox.app` runs as a menu bar item (no Dock icon). The icon reflects idle,
-recording, and transcribing; the popover has start/stop, a level meter, the mode
-picker, and the last transcript; Settings covers model, language, hotkey,
-recording limits, vocabulary, modes, output, and feedback.
-
-While recording, a click-through waveform strip floats under the menu bar (on
-whichever screen the pointer is on), and Vox plays a stock macOS sound for four
-events: recording starts, recording stops (mic closed, before transcription or
-a mode runs), the dictation is fully done (output delivered — can land a few
-seconds after "stops" for an LLM mode), and something fails. All four are
-configurable:
-
-```bash
-vox config set feedback.start_sound Glass   # any sound in /System/Library/Sounds
-vox config set feedback.stop_sound off      # silence just this one
-vox config set feedback.done_sound Glass
-vox config set feedback.sounds_enabled false
-vox config set feedback.show_overlay false
-```
-
-Default hotkey is **⌃⌥Space**, press-and-hold (switchable to toggle in
-Settings). Settings → General has a "Record new shortcut…" button that
-captures the next chord you press (must include at least one modifier); the
-same key/modifiers are settable directly with `vox config set hotkey.key_code`
-and `vox config set hotkey.modifiers`. It is registered through Carbon's
-`RegisterEventHotKey`, so it needs no Accessibility permission.
 
 ## Development
 

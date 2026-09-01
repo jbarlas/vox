@@ -317,6 +317,10 @@ public struct LLMConfig: Codable, Sendable, Equatable {
     /// an arbitrary cap here. A reasoning model can burn through a small cap
     /// on chain-of-thought alone and never reach its actual answer.
     public var maxOutputTokens: Int?
+    /// Opt out of the loopback-only rule for `http://` endpoints, for a
+    /// plain-HTTP LiteLLM on a network the user considers trusted. Optional so
+    /// configs written before it existed still decode; `nil` means "off".
+    public var allowInsecureHTTP: Bool?
 
     public init(
         baseURL: String = "http://127.0.0.1:4000/v1",
@@ -324,7 +328,8 @@ public struct LLMConfig: Codable, Sendable, Equatable {
         apiKeyEnvVar: String? = "LITELLM_API_KEY",
         temperature: Double = 0.2,
         timeoutSeconds: Double = 60,
-        maxOutputTokens: Int? = nil
+        maxOutputTokens: Int? = nil,
+        allowInsecureHTTP: Bool? = nil
     ) {
         self.baseURL = baseURL
         self.model = model
@@ -332,6 +337,7 @@ public struct LLMConfig: Codable, Sendable, Equatable {
         self.temperature = temperature
         self.timeoutSeconds = timeoutSeconds
         self.maxOutputTokens = maxOutputTokens
+        self.allowInsecureHTTP = allowInsecureHTTP
     }
 
     public static let `default` = LLMConfig()
@@ -344,9 +350,48 @@ public struct LLMConfig: Codable, Sendable, Equatable {
         case temperature
         case timeoutSeconds
         case maxOutputTokens
+        case allowInsecureHTTP = "allowInsecureHttp"
     }
 
     public var chatCompletionsURL: URL? {
         URL(string: baseURL.hasSuffix("/") ? baseURL + "chat/completions" : baseURL + "/chat/completions")
+    }
+
+    /// Rejects an endpoint that would put the transcript — and the
+    /// `Authorization: Bearer` header, when `apiKeyEnvVar` is set — on the wire
+    /// in cleartext. `http://` is only safe when it never leaves the machine,
+    /// so it is allowed for loopback hosts and otherwise requires `https://`
+    /// (or an explicit `allowInsecureHTTP` opt-in for a trusted LAN).
+    public func validateEndpointSecurity() throws {
+        guard let url = URL(string: baseURL), let scheme = url.scheme?.lowercased() else {
+            throw VoxError.config("llm.base_url is not a valid URL", detail: baseURL)
+        }
+        guard scheme == "http" || scheme == "https" else {
+            throw VoxError.config(
+                "llm.base_url must be an http:// or https:// URL",
+                detail: baseURL
+            )
+        }
+        guard scheme == "http", allowInsecureHTTP != true else { return }
+        guard !Self.isLoopback(url.host ?? "") else { return }
+        let exposed = apiKeyEnvVar.map { "dictated transcripts and the \($0) key" } ?? "dictated transcripts"
+        throw VoxError.config(
+            "llm.base_url may only use http:// for a loopback host",
+            detail: "\(baseURL) would send \(exposed) over the network in cleartext. "
+                + "Use https://, or run `vox config set llm.allow_insecure_http true` "
+                + "to accept that on a trusted network."
+        )
+    }
+
+    /// Hosts that cannot leave the machine: `localhost` (and `*.localhost`,
+    /// which RFC 6761 reserves for it), the whole `127.0.0.0/8` block, and IPv6
+    /// `::1`.
+    static func isLoopback(_ host: String) -> Bool {
+        let host = host.lowercased()
+        if host == "localhost" || host.hasSuffix(".localhost") { return true }
+        if host == "::1" || host == "[::1]" { return true }
+        let octets = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard octets.count == 4, octets.allSatisfy({ UInt8($0) != nil }) else { return false }
+        return octets[0] == "127"
     }
 }
