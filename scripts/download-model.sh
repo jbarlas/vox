@@ -5,7 +5,7 @@
 # even if the Swift build is broken, and so CI can pre-warm the cache.
 set -euo pipefail
 
-MODEL="${1:-large-v3-turbo-q5_0}"
+MODEL="${1:-small.en}"
 BASE_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
 SUPPORT_DIR="${VOX_HOME:-$HOME/Library/Application Support/Vox}"
 MODELS_DIR="$SUPPORT_DIR/models"

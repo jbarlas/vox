@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 
 SWIFT ?= swift
-MODEL ?= large-v3-turbo-q5_0
+MODEL ?= small.en
 PREFIX ?= /usr/local
 CONFIGURATION ?= release
 VOX := .build/$(CONFIGURATION)/vox

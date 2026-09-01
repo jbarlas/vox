@@ -20,7 +20,7 @@ vox record --output json --timeout 30
     "raw_transcript": "uh check the deploy logs for errors",
     "mode": "cleanup",
     "mode_kind": "cleanup",
-    "model": "large-v3-turbo-q5_0",
+    "model": "small.en",
     "language": "en",
     "duration_ms": 2340,
     "audio_duration_ms": 1800,
@@ -55,7 +55,15 @@ make install          # optional: copies the CLI to /usr/local/bin/vox
 vox permissions --request
 ```
 
-`make setup` is non-interactive. Override the model with `make setup MODEL=small.en`.
+`make setup` is non-interactive. It installs `small.en` (~466 MB), a good
+latency/accuracy tradeoff for dictation; swap it any time:
+
+```bash
+make setup MODEL=large-v3-turbo-q5_0   # at setup time
+vox models list                        # see everything, and what is installed
+vox models download large-v3-turbo     # fetch another one
+vox models set large-v3-turbo          # and use it (also in Settings → General)
+```
 
 Build the menu bar app with `make app`, which produces `dist/Vox.app`; `make sign`
 ad-hoc signs it (set `DEVELOPER_ID` for a distributable build) and `make notarize`

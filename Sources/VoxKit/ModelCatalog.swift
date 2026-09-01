@@ -32,7 +32,7 @@ public enum ModelCatalog {
         string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
     )!
 
-    public static let defaultModelID = "large-v3-turbo-q5_0"
+    public static let defaultModelID = "small.en"
 
     public static let all: [WhisperModel] = [
         WhisperModel(
@@ -54,7 +54,7 @@ public enum ModelCatalog {
             fileName: "ggml-small.en.bin",
             approximateSizeMB: 466,
             isMultilingual: false,
-            summary: "Good accuracy/speed balance, English only."
+            summary: "Vox default: good accuracy/speed balance, English only."
         ),
         WhisperModel(
             id: "medium.en",
@@ -82,7 +82,7 @@ public enum ModelCatalog {
             fileName: "ggml-large-v3-turbo-q5_0.bin",
             approximateSizeMB: 574,
             isMultilingual: true,
-            summary: "Quantized turbo. Vox default: near-turbo accuracy, ~570MB."
+            summary: "Quantized turbo: near-turbo accuracy at a third of the size."
         ),
     ]
 

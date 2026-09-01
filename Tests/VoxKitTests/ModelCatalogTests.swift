@@ -22,7 +22,7 @@ final class ModelCatalogTests: XCTestCase {
         let url = ModelCatalog.downloadURL(for: ModelCatalog.defaultModel)
         XCTAssertEqual(
             url.absoluteString,
-            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin"
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin"
         )
     }
 }
