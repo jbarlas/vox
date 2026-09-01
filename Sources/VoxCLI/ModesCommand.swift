@@ -97,10 +97,8 @@ struct Modes: AsyncParsableCommand {
                     model: model,
                     temperature: temperature
                 )
-                try mode.validate()
                 _ = try configOptions.store.update { config in
-                    config.modes.removeAll { $0.name.caseInsensitiveCompare(name) == .orderedSame }
-                    config.modes.append(mode)
+                    try config.setMode(mode)
                 }
                 Stderr.write("Defined mode '\(name)'.")
             } catch {
@@ -121,16 +119,7 @@ struct Modes: AsyncParsableCommand {
         func run() throws {
             do {
                 _ = try configOptions.store.update { config in
-                    guard config.mode(named: name) != nil else {
-                        throw VoxError.config("Unknown mode '\(name)'")
-                    }
-                    guard config.defaultMode.caseInsensitiveCompare(name) != .orderedSame else {
-                        throw VoxError.config(
-                            "Cannot remove '\(name)' while it is the default mode",
-                            detail: "Run `vox modes set-default <other>` first."
-                        )
-                    }
-                    config.modes.removeAll { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+                    try config.removeMode(named: name)
                 }
                 Stderr.write("Removed mode '\(name)'.")
             } catch {
