@@ -78,22 +78,27 @@ final class AppState: ObservableObject {
             // Defaults must not quietly replace a config we only failed to
             // parse. Re-read first: if the file was repaired externally since
             // launch, load it and keep the user's settings; only quarantine a
-            // file that is still unreadable.
-            var fresh: VoxConfig
-            if configLoadError != nil {
-                if let repaired = try? store.load() {
-                    fresh = repaired
-                    configLoadError = nil
+            // file that is still unreadable. The whole re-read/mutate/write
+            // runs under the cross-process lock so a `vox config set` racing
+            // this cannot be read stale and then overwritten.
+            let fresh: VoxConfig = try store.withLock {
+                var fresh: VoxConfig
+                if configLoadError != nil {
+                    if let repaired = try? store.load() {
+                        fresh = repaired
+                        configLoadError = nil
+                    } else {
+                        try store.quarantineUnreadableFile()
+                        configLoadError = nil
+                        fresh = config
+                    }
                 } else {
-                    try store.quarantineUnreadableFile()
-                    configLoadError = nil
-                    fresh = config
+                    fresh = (try? store.load()) ?? config
                 }
-            } else {
-                fresh = (try? store.load()) ?? config
+                mutate(&fresh)
+                try store.save(fresh)
+                return fresh
             }
-            mutate(&fresh)
-            try store.save(fresh)
             config = fresh
             feedback.config = fresh.feedback
             onConfigChange?(fresh)
