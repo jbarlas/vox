@@ -42,6 +42,11 @@ public struct LiteLLMClient: ChatCompletionClient {
     private let session: URLSession
 
     public init(config: LLMConfig, environment: [String: String] = ProcessInfo.processInfo.environment) throws {
+        // Checked here as well as in `vox config set`: a hand-edited
+        // config.json must not be a way to POST transcripts in cleartext, and
+        // failing at construction keeps the request from ever being sent (a
+        // mode failure degrades to the raw transcript rather than losing it).
+        try config.validateEndpointSecurity()
         guard let endpoint = config.chatCompletionsURL else {
             throw VoxError.llm("llm.base_url is not a valid URL", detail: config.baseURL)
         }

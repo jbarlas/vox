@@ -96,4 +96,41 @@ final class ConfigKeysTests: XCTestCase {
         try ConfigKeys.set("llm.max_output_tokens", to: "100000", in: &config)
         XCTAssertEqual(config.llm.maxOutputTokens, 100_000)
     }
+
+    func testCleartextBaseURLIsOnlyAcceptedForLoopback() throws {
+        var config = VoxConfig()
+        for allowed in [
+            "http://127.0.0.1:4000/v1",
+            "http://127.4.5.6:4000/v1",
+            "http://localhost:4000/v1",
+            "http://litellm.localhost/v1",
+            "http://[::1]:4000/v1",
+            "https://api.openai.com/v1",
+        ] {
+            try ConfigKeys.set("llm.base_url", to: allowed, in: &config)
+            XCTAssertEqual(config.llm.baseURL, allowed)
+        }
+        for rejected in [
+            "http://192.168.1.10:4000/v1",
+            "http://litellm.internal/v1",
+            "ftp://127.0.0.1/v1",
+            "127.0.0.1:4000",
+        ] {
+            XCTAssertThrowsError(try ConfigKeys.set("llm.base_url", to: rejected, in: &config)) { error in
+                XCTAssertEqual((error as? VoxError)?.code, .config)
+            }
+        }
+        // The rejected values left the endpoint alone.
+        XCTAssertEqual(config.llm.baseURL, "https://api.openai.com/v1")
+    }
+
+    func testAllowInsecureHTTPOptsOutOfTheLoopbackRule() throws {
+        var config = VoxConfig()
+        XCTAssertThrowsError(
+            try ConfigKeys.set("llm.base_url", to: "http://192.168.1.10:4000/v1", in: &config)
+        )
+        try ConfigKeys.set("llm.allow_insecure_http", to: "true", in: &config)
+        try ConfigKeys.set("llm.base_url", to: "http://192.168.1.10:4000/v1", in: &config)
+        XCTAssertEqual(try ConfigKeys.get("llm.allow_insecure_http", from: config), "true")
+    }
 }
