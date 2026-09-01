@@ -15,6 +15,8 @@ struct SettingsView: View {
                 .tabItem { Label("Vocabulary", systemImage: "text.book.closed") }
             ModesSettings(state: state)
                 .tabItem { Label("Modes", systemImage: "wand.and.stars") }
+            LLMSettings(state: state)
+                .tabItem { Label("LLM", systemImage: "cloud") }
             OutputSettings(state: state)
                 .tabItem { Label("Output", systemImage: "doc.on.clipboard") }
             FeedbackSettings(state: state)
@@ -468,6 +470,9 @@ private struct ModeDetail: View {
     @State private var name: String = ""
     @State private var prompt: String = ""
     @State private var model: String = ""
+    @State private var overridesEndpoint = false
+    @State private var baseURL: String = ""
+    @State private var apiKeyEnvVar: String = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -482,7 +487,24 @@ private struct ModeDetail: View {
                     .font(.system(.body, design: .monospaced))
                     .border(Color.secondary.opacity(0.3))
                 TextField("Model (blank uses \(state.config.llm.model))", text: $model)
-                Text("Sent to \(model.isEmpty ? state.config.llm.model : model) via \(state.config.llm.baseURL).")
+                Toggle("Send this mode to its own endpoint", isOn: $overridesEndpoint)
+                if overridesEndpoint {
+                    Picker("Provider", selection: providerBinding) {
+                        ForEach(LLMProviderCatalog.all) { provider in
+                            Text(provider.displayName).tag(provider.id)
+                        }
+                        Text("Custom endpoint").tag("")
+                    }
+                    TextField("URL", text: $baseURL, prompt: Text("https://…/v1"))
+                    TextField("API key variable", text: $apiKeyEnvVar, prompt: Text("none"))
+                    Text(
+                        "The global key variable is not reused for another endpoint — name "
+                            + "this one's own, or it is called without a key."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                Text("Sent to \(destinationSummary).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
@@ -515,10 +537,31 @@ private struct ModeDetail: View {
         edited() != mode
     }
 
+    /// What the fields above actually resolve to, since a blank one inherits
+    /// the global endpoint rather than clearing it.
+    private var destinationSummary: String {
+        let effective = state.config.llm.effective(for: edited())
+        return "\(effective.model) via \(effective.baseURL)"
+    }
+
+    private var providerBinding: Binding<String> {
+        Binding(
+            get: { LLMProviderCatalog.provider(forBaseURL: baseURL)?.id ?? "" },
+            set: { id in
+                guard let provider = LLMProviderCatalog.provider(id: id) else { return }
+                baseURL = provider.baseURL
+                apiKeyEnvVar = provider.apiKeyEnvVar ?? ""
+            }
+        )
+    }
+
     private func load() {
         name = mode.name
         prompt = mode.prompt ?? ""
         model = mode.model ?? ""
+        overridesEndpoint = mode.baseURL != nil
+        baseURL = mode.baseURL ?? ""
+        apiKeyEnvVar = mode.apiKeyEnvVar ?? ""
         error = nil
     }
 
@@ -529,6 +572,10 @@ private struct ModeDetail: View {
             updated.prompt = prompt
             let model = model.trimmingCharacters(in: .whitespaces)
             updated.model = model.isEmpty ? nil : model
+            let endpoint = baseURL.trimmingCharacters(in: .whitespaces)
+            let envVar = apiKeyEnvVar.trimmingCharacters(in: .whitespaces)
+            updated.baseURL = overridesEndpoint && !endpoint.isEmpty ? endpoint : nil
+            updated.apiKeyEnvVar = updated.baseURL == nil || envVar.isEmpty ? nil : envVar
         }
         return updated
     }
@@ -544,6 +591,139 @@ private struct ModeDetail: View {
     private func makeDefault() {
         let name = mode.name
         error = state.save { $0.defaultMode = name }
+    }
+}
+
+/// The endpoint every LLM mode uses unless it overrides it, editable here
+/// rather than only through `vox config set llm.base_url`.
+///
+/// The API key is deliberately not a field: Vox reads it from the named
+/// environment variable at request time, so `config.json` never holds a
+/// credential.
+private struct LLMSettings: View {
+    @ObservedObject var state: AppState
+    @State private var baseURL = ""
+    @State private var model = ""
+    @State private var apiKeyEnvVar = ""
+    @State private var error: String?
+
+    /// Tag for "none of the presets" — an endpoint the catalog doesn't know.
+    private static let customProvider = ""
+
+    var body: some View {
+        Form {
+            Section("Endpoint") {
+                Picker("Provider", selection: providerBinding) {
+                    ForEach(LLMProviderCatalog.all) { provider in
+                        Text(provider.displayName).tag(provider.id)
+                    }
+                    Text("Custom endpoint").tag(Self.customProvider)
+                }
+                TextField("URL", text: $baseURL, prompt: Text("https://…/v1"))
+                TextField("Default model", text: $model)
+                TextField("API key variable", text: $apiKeyEnvVar, prompt: Text("none"))
+                keyStatus
+                HStack {
+                    if let error {
+                        Text(error).font(.caption).foregroundStyle(.orange)
+                    }
+                    Spacer()
+                    Button("Apply") { apply() }.disabled(!hasEdits)
+                }
+            }
+
+            if let provider = LLMProviderCatalog.provider(id: providerBinding.wrappedValue) {
+                Section("Models on \(provider.displayName)") {
+                    // Providers share no model ids, so switching provider leaves
+                    // the old model behind; these fill the field in one click.
+                    ForEach(provider.exampleModels, id: \.self) { example in
+                        Button(example) { model = example }
+                            .buttonStyle(.link)
+                    }
+                    Text(
+                        (provider.note.map { $0 + " " } ?? "")
+                            + "Examples only — any model the endpoint serves works."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Per-mode overrides") {
+                Text(
+                    "A single mode can run somewhere else entirely — see Modes. Modes "
+                        + "without an override of their own use the endpoint above."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { load() }
+        .task(id: state.config.llm) { load() }
+    }
+
+    /// Whether the key is visible to *this* process, which for an app launched
+    /// from Finder is not the same as being exported in a shell.
+    @ViewBuilder private var keyStatus: some View {
+        let envVar = apiKeyEnvVar.trimmingCharacters(in: .whitespaces)
+        if envVar.isEmpty {
+            Text("No key is sent. Local endpoints accept that; hosted providers won't.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else if ProcessInfo.processInfo.environment[envVar]?.isEmpty == false {
+            Text("\(envVar) is set for this app. Vox reads it per request and never stores it.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            Text(
+                "\(envVar) is not set for this app. Opened from Finder, Vox doesn't inherit "
+                    + "your shell — run `launchctl setenv \(envVar) <key>` and relaunch, or "
+                    + "start Vox from a shell that exports it."
+            )
+            .font(.caption)
+            .foregroundStyle(.orange)
+        }
+    }
+
+    private var hasEdits: Bool {
+        edited() != state.config.llm
+    }
+
+    private var providerBinding: Binding<String> {
+        Binding(
+            get: { LLMProviderCatalog.provider(forBaseURL: baseURL)?.id ?? Self.customProvider },
+            set: { id in
+                guard let provider = LLMProviderCatalog.provider(id: id) else { return }
+                baseURL = provider.baseURL
+                apiKeyEnvVar = provider.apiKeyEnvVar ?? ""
+            }
+        )
+    }
+
+    private func load() {
+        baseURL = state.config.llm.baseURL
+        model = state.config.llm.model
+        apiKeyEnvVar = state.config.llm.apiKeyEnvVar ?? ""
+    }
+
+    private func edited() -> LLMConfig {
+        var updated = state.config.llm
+        updated.baseURL = baseURL.trimmingCharacters(in: .whitespaces)
+        updated.model = model.trimmingCharacters(in: .whitespaces)
+        let envVar = apiKeyEnvVar.trimmingCharacters(in: .whitespaces)
+        updated.apiKeyEnvVar = envVar.isEmpty ? nil : envVar
+        return updated
+    }
+
+    private func apply() {
+        let updated = edited()
+        error = state.save { config in
+            // Rejects a cleartext remote endpoint here, where it can be
+            // corrected, rather than at the first dictation that uses it.
+            try updated.validateEndpointSecurity()
+            config.llm = updated
+        }
     }
 }
 
@@ -592,16 +772,6 @@ private struct OutputSettings: View {
                     Button("Clear history now") { state.clearHistory() }
                         .disabled(state.history.isEmpty)
                 }
-            }
-
-            Section("LLM modes") {
-                LabeledContent("Endpoint", value: state.config.llm.baseURL)
-                LabeledContent("Default model", value: state.config.llm.model)
-                Text(
-                    "LLM modes route through this OpenAI-compatible endpoint. Change it with `vox config set llm.base_url`."
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

@@ -6,7 +6,9 @@ struct ConfigCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "config",
         abstract: "Inspect and edit the config shared by the CLI and the menu bar app.",
-        subcommands: [Initialize.self, Get.self, Set.self, List.self, Path.self, Vocab.self]
+        subcommands: [
+            Initialize.self, Get.self, Set.self, List.self, Path.self, Vocab.self, Providers.self,
+        ]
     )
 
     struct Initialize: ParsableCommand {
@@ -105,6 +107,41 @@ struct ConfigCommand: AsyncParsableCommand {
             } catch {
                 voxError(from: error).printToStderr()
                 throw voxExitCode(for: error)
+            }
+        }
+    }
+
+    struct Providers: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "List the known OpenAI-compatible LLM endpoints.",
+            discussion: """
+                `vox config set llm.provider <id>` points every LLM mode at one of these; \
+                `vox modes add <name> --provider <id>` points a single mode at it. Either \
+                sets the endpoint and the key variable, and leaves the model to you — no \
+                two providers share model ids. The key itself is only ever read from the \
+                environment, never written to config.json.
+                """
+        )
+
+        @OptionGroup var configOptions: ConfigOptions
+
+        func run() throws {
+            let current = (try? configOptions.loadConfig())?.llm.provider
+            let environment = ProcessInfo.processInfo.environment
+            for provider in LLMProviderCatalog.all {
+                let marker = provider.id == current?.id ? "*" : " "
+                Stdout.write(
+                    "\(marker) \(provider.id.padding(toLength: 10, withPad: " ", startingAt: 0)) "
+                        + provider.baseURL
+                )
+                if let envVar = provider.apiKeyEnvVar {
+                    let state = environment[envVar]?.isEmpty == false ? "set" : "not set"
+                    Stdout.write("    key: \(envVar) (\(state) here)")
+                }
+                Stdout.write("    models: \(provider.exampleModels.joined(separator: ", ")) (examples)")
+                if let note = provider.note {
+                    Stdout.write("    \(note)")
+                }
             }
         }
     }
