@@ -22,10 +22,13 @@ cp "$EXECUTABLE" "$APP/Contents/MacOS/Vox"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
-# Ship the CLI inside the bundle when it has been built, so an app-only install
-# can still expose `vox` (see README for the symlink step).
+# Ship the CLI inside the bundle when it has been built, so an app-only
+# install can still expose `vox` (see README for the symlink step). Named
+# distinctly from the app's own "Vox" executable: the default macOS volume
+# format (APFS) is case-insensitive, so "vox" and "Vox" are the same path
+# and a same-named copy here would silently clobber the app binary above.
 if [[ -x "$ROOT/.build/$CONFIGURATION/vox" ]]; then
-  cp "$ROOT/.build/$CONFIGURATION/vox" "$APP/Contents/MacOS/vox"
+  cp "$ROOT/.build/$CONFIGURATION/vox" "$APP/Contents/MacOS/vox-cli"
 fi
 
 echo "==> Built $APP"

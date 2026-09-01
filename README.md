@@ -70,6 +70,14 @@ ad-hoc signs it (set `DEVELOPER_ID` for a distributable build) and `make notariz
 submits it to Apple. `make brew-formula` writes a build-from-source formula to
 `dist/vox.rb` for a tap.
 
+The bundle also carries the CLI at `Vox.app/Contents/MacOS/vox-cli`, so an
+app-only install (drag `Vox.app` to `/Applications`, no `make install`) can
+still expose `vox` on your `PATH`:
+
+```bash
+ln -s /Applications/Vox.app/Contents/MacOS/vox-cli /opt/homebrew/bin/vox
+```
+
 ## CLI
 
 | Command | Purpose |
