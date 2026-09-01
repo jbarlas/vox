@@ -176,7 +176,7 @@ Notable keys: `model`, `default_mode`, `language`, `vocab`, `hotkey.*`,
 `recording.max_duration_seconds`, `recording.silence_timeout_seconds`,
 `recording.silence_threshold_db`, `output.destination`,
 `output.session_history_limit` (`null`/`off` keeps every entry forever),
-`feedback.*`, `llm.base_url`, `llm.model`, `llm.api_key_env_var`,
+`feedback.*`, `llm.provider`, `llm.base_url`, `llm.model`, `llm.api_key_env_var`,
 `llm.max_output_tokens` (`null` by default — omits the cap entirely).
 
 Vox never stores an API key: `llm.api_key_env_var` names the environment variable
@@ -210,15 +210,46 @@ message wrapped in `<transcript>…</transcript>`, which keeps a small model fro
 answering a transcript instead of editing it. Write custom prompts against that
 shape, and tell the model not to echo the tags.
 
-LLM modes always talk to one OpenAI-compatible `/v1/chat/completions` endpoint,
-by default a local LiteLLM at `http://127.0.0.1:4000/v1`. Whether a mode's model
-runs on Ollama or a hosted provider is LiteLLM routing, not a Vox concern.
+LLM modes talk to an OpenAI-compatible `/v1/chat/completions` endpoint, by
+default a local LiteLLM at `http://127.0.0.1:4000/v1`.
 
 ```bash
 vox modes add bullets --prompt "Rewrite the given transcript as terse bullet points. Output only the bullets, no tags or commentary."
 vox modes test bullets "so we should probably ship the fix today and tell support"
 vox record --mode bullets
 ```
+
+### Providers
+
+A provider is a preset for the endpoint and key-variable pair, so a hosted API
+is one choice rather than a URL to look up. `vox config providers` lists them
+with their key variables and whether each is set in the current environment.
+
+```bash
+vox config providers
+vox config set llm.provider openai
+vox config set llm.model gpt-4o-mini
+export OPENAI_API_KEY=…
+```
+
+Anything not in that list works by setting `llm.base_url` and
+`llm.api_key_env_var` directly. Settings → LLM edits the same fields, and shows
+whether the key variable is visible to the app — the menu bar app inherits the
+login environment, not your shell's, so a hosted key usually needs
+`launchctl setenv OPENAI_API_KEY …` (or a login item) rather than a line in
+`.zshrc`.
+
+A single mode can go somewhere else — a cheap local model for `cleanup`-style
+rewrites, a hosted one for `email`:
+
+```bash
+vox modes add email-pro --prompt "..." --provider openai --model gpt-4o
+```
+
+The same fields are per-mode in Settings → Modes. A mode's endpoint does not
+inherit the global key variable or the `llm.allow_insecure_http` opt-in, both of
+which were chosen for the global endpoint: give the mode its own
+`--api-key-env`. Modes that override nothing keep using `llm.*`.
 
 ### Session history
 

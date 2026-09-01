@@ -51,7 +51,21 @@ public struct LiteLLMClient: ChatCompletionClient {
             throw VoxError.llm("llm.base_url is not a valid URL", detail: config.baseURL)
         }
         self.endpoint = endpoint
-        self.apiKey = config.apiKeyEnvVar.flatMap { environment[$0] }.flatMap { $0.isEmpty ? nil : $0 }
+        let apiKey = config.apiKeyEnvVar.flatMap { environment[$0] }.flatMap { $0.isEmpty ? nil : $0 }
+        // A hosted provider answers a keyless request with an opaque 401. The
+        // local endpoints Vox defaults to accept one, so only a remote host
+        // makes the missing variable an error rather than a valid setup.
+        if let envVar = config.apiKeyEnvVar, apiKey == nil,
+            !LLMConfig.isLoopback(URL(string: config.baseURL)?.host ?? "")
+        {
+            throw VoxError.llm(
+                "\(envVar) is not set, and \(endpoint.host ?? config.baseURL) needs an API key",
+                detail: "Vox reads the key from the environment and never stores it in config.json. "
+                    + "Export \(envVar) where Vox runs — for the menu bar app that means the login "
+                    + "environment (e.g. `launchctl setenv \(envVar) …`), not just a shell."
+            )
+        }
+        self.apiKey = apiKey
         self.timeout = config.timeoutSeconds
         let sessionConfiguration = URLSessionConfiguration.default
         sessionConfiguration.timeoutIntervalForRequest = config.timeoutSeconds

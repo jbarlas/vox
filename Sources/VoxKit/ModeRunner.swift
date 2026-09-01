@@ -48,26 +48,28 @@ public struct ModeRunner: Sendable {
             guard !trimmed.isEmpty else {
                 return ModeResult(text: "", mode: mode.name, kind: .llm, llmModel: nil)
             }
-            let model = mode.model ?? llmConfig.model
+            // Per-mode endpoint/key/model overrides resolve here, so one mode
+            // can run on a hosted provider while the rest stay local.
+            let effective = llmConfig.effective(for: mode)
             // Sent as a plain user-role message, a transcript that happens to
             // talk about "the LLM" or "this transcript" reads to a small
             // model as a live message directed at it, not data to edit — it
             // answers instead of editing. Delimiting it heads that off; the
             // built-in prompts below are written to match.
             let request = ChatCompletionRequest(
-                model: model,
+                model: effective.model,
                 systemPrompt: mode.prompt ?? "",
                 userText: "<transcript>\(trimmed)</transcript>",
-                temperature: mode.temperature ?? llmConfig.temperature,
-                maxOutputTokens: llmConfig.maxOutputTokens
+                temperature: effective.temperature,
+                maxOutputTokens: effective.maxOutputTokens
             )
-            let client = try clientFactory(llmConfig)
+            let client = try clientFactory(effective)
             let completion = try await client.complete(request)
             return ModeResult(
                 text: completion.trimmingCharacters(in: .whitespacesAndNewlines),
                 mode: mode.name,
                 kind: .llm,
-                llmModel: model
+                llmModel: effective.model
             )
         }
     }

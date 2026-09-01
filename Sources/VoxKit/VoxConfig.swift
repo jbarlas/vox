@@ -82,6 +82,7 @@ public struct VoxConfig: Codable, Sendable, Equatable {
     /// the same edits, rather than the UI discovering them from a failed save.
     public mutating func setMode(_ mode: ModeDefinition, replacing existingName: String? = nil) throws {
         try mode.validate()
+        try validateEndpoint(of: mode)
         let previousName = existingName ?? mode.name
         let isRename = previousName.caseInsensitiveCompare(mode.name) != .orderedSame
         if isRename, self.mode(named: mode.name) != nil {
@@ -126,6 +127,13 @@ public struct VoxConfig: Codable, Sendable, Equatable {
         modes.firstIndex { $0.name.caseInsensitiveCompare(name) == .orderedSame }
     }
 
+    /// A mode's endpoint override is held to the same cleartext rule as the
+    /// global one — a per-mode field must not become a way around it.
+    private func validateEndpoint(of mode: ModeDefinition) throws {
+        guard mode.baseURL != nil else { return }
+        try llm.effective(for: mode).validateEndpointSecurity(label: "Mode '\(mode.name)' base_url")
+    }
+
     /// Rejects documents that would fail confusingly deeper in the pipeline.
     public func validate() throws {
         guard schemaVersion <= VoxConfig.currentSchemaVersion else {
@@ -153,6 +161,7 @@ public struct VoxConfig: Codable, Sendable, Equatable {
                 throw VoxError.config("Duplicate mode name '\(mode.name)'")
             }
             try mode.validate()
+            try validateEndpoint(of: mode)
         }
         try recording.validate()
         try feedback.validate()
@@ -404,6 +413,43 @@ public struct LLMConfig: Codable, Sendable, Equatable {
         case allowInsecureHTTP = "allowInsecureHttp"
     }
 
+    /// The endpoint settings a single mode actually runs with, after its own
+    /// overrides.
+    ///
+    /// A mode that repoints `baseURL` and names no key of its own gets no key:
+    /// the global `apiKeyEnvVar` was chosen for the global endpoint, and
+    /// forwarding it would hand, say, a LiteLLM key to `api.openai.com`
+    /// because one mode was switched over.
+    public func effective(for mode: ModeDefinition) -> LLMConfig {
+        var effective = self
+        if let model = mode.model { effective.model = model }
+        if let temperature = mode.temperature { effective.temperature = temperature }
+        if let baseURL = mode.baseURL {
+            effective.baseURL = baseURL
+            effective.apiKeyEnvVar = mode.apiKeyEnvVar
+            // Also per-endpoint: an opt-in for a trusted-LAN proxy says nothing
+            // about a host this mode was separately pointed at.
+            effective.allowInsecureHTTP = nil
+        } else if let apiKeyEnvVar = mode.apiKeyEnvVar {
+            effective.apiKeyEnvVar = apiKeyEnvVar
+        }
+        return effective
+    }
+
+    /// The catalog entry this endpoint corresponds to, if any.
+    public var provider: LLMProvider? {
+        LLMProviderCatalog.provider(forBaseURL: baseURL)
+    }
+
+    /// Points the endpoint (and the key variable that goes with it) at
+    /// `provider`, leaving the model alone — provider catalogs share no model
+    /// ids, so the caller has to choose one.
+    public mutating func apply(_ provider: LLMProvider) {
+        baseURL = provider.baseURL
+        apiKeyEnvVar = provider.apiKeyEnvVar
+        allowInsecureHTTP = nil
+    }
+
     public var chatCompletionsURL: URL? {
         URL(string: baseURL.hasSuffix("/") ? baseURL + "chat/completions" : baseURL + "/chat/completions")
     }
@@ -413,13 +459,15 @@ public struct LLMConfig: Codable, Sendable, Equatable {
     /// in cleartext. `http://` is only safe when it never leaves the machine,
     /// so it is allowed for loopback hosts and otherwise requires `https://`
     /// (or an explicit `allowInsecureHTTP` opt-in for a trusted LAN).
-    public func validateEndpointSecurity() throws {
+    /// `label` names the field in the error, so a per-mode override reports the
+    /// mode rather than the global key the user did not touch.
+    public func validateEndpointSecurity(label: String = "llm.base_url") throws {
         guard let url = URL(string: baseURL), let scheme = url.scheme?.lowercased() else {
-            throw VoxError.config("llm.base_url is not a valid URL", detail: baseURL)
+            throw VoxError.config("\(label) is not a valid URL", detail: baseURL)
         }
         guard scheme == "http" || scheme == "https" else {
             throw VoxError.config(
-                "llm.base_url must be an http:// or https:// URL",
+                "\(label) must be an http:// or https:// URL",
                 detail: baseURL
             )
         }
@@ -427,7 +475,7 @@ public struct LLMConfig: Codable, Sendable, Equatable {
         guard !Self.isLoopback(url.host ?? "") else { return }
         let exposed = apiKeyEnvVar.map { "dictated transcripts and the \($0) key" } ?? "dictated transcripts"
         throw VoxError.config(
-            "llm.base_url may only use http:// for a loopback host",
+            "\(label) may only use http:// for a loopback host",
             detail: "\(baseURL) would send \(exposed) over the network in cleartext. "
                 + "Use https://, or run `vox config set llm.allow_insecure_http true` "
                 + "to accept that on a trusted network."

@@ -26,6 +26,7 @@ public enum ConfigKeys {
         "feedback.done_sound",
         "feedback.error_sound",
         "feedback.show_overlay",
+        "llm.provider",
         "llm.base_url",
         "llm.model",
         "llm.api_key_env_var",
@@ -60,6 +61,7 @@ public enum ConfigKeys {
         case "feedback.done_sound": return config.feedback.doneSound ?? "off"
         case "feedback.error_sound": return config.feedback.errorSound ?? "off"
         case "feedback.show_overlay": return String(config.feedback.showOverlay)
+        case "llm.provider": return config.llm.provider?.id ?? "custom"
         case "llm.base_url": return config.llm.baseURL
         case "llm.model": return config.llm.model
         case "llm.api_key_env_var": return config.llm.apiKeyEnvVar ?? "none"
@@ -132,6 +134,19 @@ public enum ConfigKeys {
             config.feedback.errorSound = try soundName(value, key)
         case "feedback.show_overlay":
             config.feedback.showOverlay = try bool(value, key)
+        // Sets the endpoint and the key variable that goes with it in one
+        // step; the model is left alone, since no two providers share ids.
+        case "llm.provider":
+            guard let provider = LLMProviderCatalog.provider(id: value) else {
+                throw VoxError.config(
+                    "Unknown llm.provider '\(value)'",
+                    detail: "Known providers: "
+                        + LLMProviderCatalog.all.map(\.id).joined(separator: ", ")
+                        + ". Anything else works by setting llm.base_url and "
+                        + "llm.api_key_env_var directly."
+                )
+            }
+            config.llm.apply(provider)
         case "llm.base_url":
             var candidate = config.llm
             candidate.baseURL = value

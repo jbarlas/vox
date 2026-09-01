@@ -15,15 +15,18 @@ final class LLMEndpointSecurityTests: XCTestCase {
     }
 
     func testClientAcceptsLoopbackHTTPSAndOptedInLAN() throws {
+        // A remote endpoint also requires the key to be present, so this
+        // supplies one to keep the assertions about the scheme alone.
+        let environment = ["LITELLM_API_KEY": "k"]
         var config = LLMConfig()
-        XCTAssertNoThrow(try LiteLLMClient(config: config))
+        XCTAssertNoThrow(try LiteLLMClient(config: config, environment: environment))
 
         config.baseURL = "https://api.openai.com/v1"
-        XCTAssertNoThrow(try LiteLLMClient(config: config))
+        XCTAssertNoThrow(try LiteLLMClient(config: config, environment: environment))
 
         config.baseURL = "http://192.168.1.10:4000/v1"
         config.allowInsecureHTTP = true
-        XCTAssertNoThrow(try LiteLLMClient(config: config))
+        XCTAssertNoThrow(try LiteLLMClient(config: config, environment: environment))
     }
 
     /// The error has to name what is exposed; the key env var is the part a
