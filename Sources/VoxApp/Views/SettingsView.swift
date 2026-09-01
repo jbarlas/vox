@@ -494,14 +494,13 @@ private struct OutputSettings: View {
                 HStack {
                     Text(
                         "Newest first, with the mode output, the raw whisper.cpp transcript, "
-                            + "and timing/error info for each entry — useful for reviewing "
-                            + "corrections or fine-tuning later."
+                            + "and timing/error info for each entry."
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     Spacer()
-                    Button("Reveal in Finder") {
-                        NSWorkspace.shared.activateFileViewerSelecting([state.sessionsFileURL])
+                    Button("View session data") {
+                        NSWorkspace.shared.open(state.sessionsFileURL)
                     }
                     .font(.caption)
                 }

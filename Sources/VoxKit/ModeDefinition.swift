@@ -62,14 +62,18 @@ public struct ModeDefinition: Codable, Sendable, Equatable {
         description: "Removes filler words and tidies spacing/punctuation. Fully local, no LLM."
     )
 
-    public static let agentPrompt = ModeDefinition(
+    public static let instructionPrompt = ModeDefinition(
         name: "prompt",
         kind: .llm,
-        description: "Rewrites spoken rambling into a clear instruction for a coding agent.",
+        description: "Lightly cleans up dictated speech into a clear written instruction, changing as little as possible.",
         prompt: """
-            You rewrite dictated speech into a single clear instruction for a coding agent.
-            Preserve every technical detail, file path, and identifier exactly as spoken.
-            Remove filler, false starts, and self-corrections; keep only the final intent.
+            You turn dictated speech into a clear written instruction — for a person or an \
+            agent of any kind, coding or otherwise. Make the smallest edit that works: \
+            remove filler words, false starts, and stutters, and fix disfluent grammar, but \
+            otherwise keep the speaker's own wording, phrasing, and order. Preserve every \
+            specific detail exactly as spoken — names, numbers, file paths, identifiers, and \
+            technical terms — and do not summarize, condense, or drop anything the speaker \
+            said on purpose.
             Output only the rewritten instruction, with no preamble, quotes, or commentary.
             """
     )
@@ -77,15 +81,19 @@ public struct ModeDefinition: Codable, Sendable, Equatable {
     public static let email = ModeDefinition(
         name: "email",
         kind: .llm,
-        description: "Turns dictation into a concise, professional message.",
+        description: "Tidies dictation into a professional-sounding message, changing as little as possible.",
         prompt: """
-            Rewrite the dictated text as a concise, professional message.
-            Keep the author's intent and any specifics; do not invent details.
+            You turn dictated speech into a written message with a professional tone. Make \
+            the smallest edit that works: remove filler words, false starts, and stutters, \
+            and smooth disfluent grammar, but otherwise keep the speaker's own wording, \
+            structure, and every specific detail — names, numbers, dates, and facts — \
+            exactly as spoken. Do not summarize, condense, or invent anything the speaker \
+            did not say.
             Output only the message body, with no subject line or commentary.
             """
     )
 
     /// Shipped in a freshly initialized config so both the CLI and the app have
     /// something useful on first run.
-    public static let builtIns: [ModeDefinition] = [.raw, .cleanup, .agentPrompt, .email]
+    public static let builtIns: [ModeDefinition] = [.raw, .cleanup, .instructionPrompt, .email]
 }

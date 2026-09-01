@@ -39,12 +39,12 @@ final class ModeRunnerTests: XCTestCase {
         let client = RecordingClient()
         client.response = "Check the deploy logs for errors."
         let result = try await runner(client: client)
-            .run(transcript: "uh check deploy logs", mode: .agentPrompt)
+            .run(transcript: "uh check deploy logs", mode: .instructionPrompt)
 
         let request = try XCTUnwrap(client.lastRequest)
         XCTAssertEqual(request.model, LLMConfig.default.model)
         XCTAssertEqual(request.userText, "uh check deploy logs")
-        XCTAssertEqual(request.systemPrompt, ModeDefinition.agentPrompt.prompt)
+        XCTAssertEqual(request.systemPrompt, ModeDefinition.instructionPrompt.prompt)
         XCTAssertEqual(request.temperature, LLMConfig.default.temperature)
         XCTAssertEqual(result.text, "Check the deploy logs for errors.")
         XCTAssertEqual(result.llmModel, LLMConfig.default.model)
@@ -69,7 +69,7 @@ final class ModeRunnerTests: XCTestCase {
 
     func testEmptyTranscriptSkipsTheLLMEntirely() async throws {
         let client = RecordingClient()
-        let result = try await runner(client: client).run(transcript: "   ", mode: .agentPrompt)
+        let result = try await runner(client: client).run(transcript: "   ", mode: .instructionPrompt)
         XCTAssertEqual(result.text, "")
         XCTAssertNil(client.lastRequest)
     }
@@ -78,7 +78,7 @@ final class ModeRunnerTests: XCTestCase {
         let client = RecordingClient()
         client.error = VoxError.llm("connection refused")
         do {
-            _ = try await runner(client: client).run(transcript: "hello", mode: .agentPrompt)
+            _ = try await runner(client: client).run(transcript: "hello", mode: .instructionPrompt)
             XCTFail("expected an error")
         } catch {
             XCTAssertEqual((error as? VoxError)?.code, .llm)
