@@ -22,6 +22,9 @@ public final class AudioCapture: NSObject {
     private let config: RecordingConfig
     private let engine = AVAudioEngine()
     private let state = CaptureState()
+    /// A day, well under what `UInt64` nanoseconds can hold, so an absurd
+    /// `--timeout` is a config error rather than an overflow trap.
+    static let maxDeadlineSeconds: Double = 86_400
     private var converter: AVAudioConverter?
 
     public init(config: RecordingConfig) {
@@ -71,9 +74,13 @@ public final class AudioCapture: NSObject {
                 detail: "Grant access in System Settings → Privacy & Security → Microphone."
             )
         }
-        guard !state.isRunning else {
+        guard state.arm() else {
             throw VoxError(code: .microphone, message: "A recording is already in progress")
         }
+        // A hotkey released while the device is still being configured has to
+        // land somewhere; from `arm()` on, `stop()` is remembered.
+        var began = false
+        defer { if !began { state.disarm() } }
 
         let inputNode = engine.inputNode
         // Before `inputFormat` is read: the format belongs to whichever device
@@ -109,11 +116,23 @@ public final class AudioCapture: NSObject {
         // `--timeout` and the configured cap are the same deadline mechanically
         // but not the same event to an agent reading `stop_reason`.
         let deadline = timeout ?? config.maxDurationSeconds
+        guard deadline.isFinite, deadline > 0, deadline <= Self.maxDeadlineSeconds else {
+            throw VoxError.config(
+                "Recording deadline must be between 0 and \(Int(Self.maxDeadlineSeconds)) seconds",
+                detail: "Got \(deadline)."
+            )
+        }
         let deadlineReason: StopReason = timeout == nil ? .maxDuration : .timeout
         let silenceTimeout = config.silenceTimeoutSeconds
         let silenceThreshold = config.silenceThresholdDB
 
-        state.begin()
+        guard state.begin() else {
+            throw VoxError(
+                code: .cancelled,
+                message: "Recording was stopped before the microphone opened"
+            )
+        }
+        began = true
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
             guard let self, let converted = self.convert(buffer, using: converter, to: targetFormat) else {
                 return
@@ -257,6 +276,10 @@ private final class CaptureState: @unchecked Sendable {
     private let lock = NSLock()
     private var samples: [Float] = []
     private var running = false
+    /// True from the moment a caller commits to recording until that recording
+    /// ends, so a stop during device setup is not dropped on the floor.
+    private var armed = false
+    private var pendingStop = false
     private var stopReason: StopReason?
     private var continuation: CheckedContinuation<StopReason, Never>?
     private var startedAt = Date()
@@ -268,20 +291,48 @@ private final class CaptureState: @unchecked Sendable {
         return running
     }
 
-    func begin() {
+    /// Claims the capture for one recording. False when one is already under
+    /// way, which is the caller's "already recording" error.
+    func arm() -> Bool {
         lock.lock()
         defer { lock.unlock() }
+        guard !armed, !running else { return false }
+        armed = true
+        pendingStop = false
+        return true
+    }
+
+    func disarm() {
+        lock.lock()
+        defer { lock.unlock() }
+        armed = false
+        pendingStop = false
+    }
+
+    /// Opens the recording, unless a stop arrived while it was being set up.
+    /// Deciding this under the same lock as `requestStop` is what closes the
+    /// window between "prepared" and "running".
+    func begin() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !pendingStop else {
+            armed = false
+            return false
+        }
         samples = []
         running = true
         stopReason = nil
         startedAt = Date()
         lastVoiceAt = nil
+        return true
     }
 
     func end() {
         lock.lock()
         defer { lock.unlock() }
         running = false
+        armed = false
+        pendingStop = false
         continuation = nil
     }
 
@@ -320,6 +371,9 @@ private final class CaptureState: @unchecked Sendable {
 
     func requestStop(reason: StopReason) {
         lock.lock()
+        if armed, !running {
+            pendingStop = true
+        }
         let resumed = finishLocked(reason: reason)
         lock.unlock()
         resumed?()

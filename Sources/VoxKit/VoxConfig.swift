@@ -105,6 +105,7 @@ public struct VoxConfig: Codable, Sendable, Equatable {
         }
         try recording.validate()
         try feedback.validate()
+        try hotkey.validate()
     }
 }
 
@@ -163,7 +164,13 @@ public struct HotkeyConfig: Codable, Sendable, Equatable {
 
     /// Carbon/`CGKeyCode` virtual key code. 49 is Space.
     public var keyCode: UInt16
-    /// Any of: command, option, control, shift.
+    /// The modifiers a Carbon hotkey registration can express. Anything else
+    /// would have to be silently dropped, turning ⌥Space into bare Space.
+    public static let supportedModifiers: Set<String> = [
+        "command", "option", "control", "shift",
+    ]
+
+    /// Any of `supportedModifiers`.
     public var modifiers: [String]
     public var activation: Activation
     public var enabled: Bool
@@ -182,6 +189,15 @@ public struct HotkeyConfig: Codable, Sendable, Equatable {
         modifiers: ["option"],
         activation: .pressAndHold
     )
+
+    public func validate() throws {
+        for modifier in modifiers where !Self.supportedModifiers.contains(modifier.lowercased()) {
+            throw VoxError.config(
+                "Unsupported hotkey modifier '\(modifier)'",
+                detail: "Supported: \(Self.supportedModifiers.sorted().joined(separator: ", "))"
+            )
+        }
+    }
 }
 
 public struct RecordingConfig: Codable, Sendable, Equatable {

@@ -131,6 +131,22 @@ final class ConfigStoreTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: backup, encoding: .utf8), "{ not json")
         // Nothing to move once it is gone.
         XCTAssertNil(try store.quarantineUnreadableFile())
+
+        // A second bad config keeps the first backup.
+        try Data("also broken".utf8).write(to: store.paths.configFile)
+        let second = try XCTUnwrap(try store.quarantineUnreadableFile())
+        XCTAssertNotEqual(second, backup)
+        XCTAssertEqual(try String(contentsOf: backup, encoding: .utf8), "{ not json")
+        XCTAssertEqual(try String(contentsOf: second, encoding: .utf8), "also broken")
+    }
+
+    func testUnsupportedHotkeyModifiersAreRejected() throws {
+        var config = VoxConfig()
+        config.hotkey.modifiers = ["function"]
+        XCTAssertThrowsError(try config.validate())
+        XCTAssertThrowsError(try ConfigKeys.set("hotkey.modifiers", to: "function", in: &config))
+        try ConfigKeys.set("hotkey.modifiers", to: "control+shift", in: &config)
+        XCTAssertEqual(config.hotkey.modifiers, ["control", "shift"])
     }
 
     func testVoxHomeEnvironmentOverridesSupportDirectory() {

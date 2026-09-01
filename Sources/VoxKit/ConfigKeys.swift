@@ -199,7 +199,9 @@ public enum ConfigKeys {
         return match
     }
 
-    static let knownModifiers: Set<String> = ["command", "option", "control", "shift", "function"]
+    /// Same set the hotkey registration can actually express, so `config set`
+    /// cannot accept a modifier that would later be dropped.
+    static var knownModifiers: Set<String> { HotkeyConfig.supportedModifiers }
 
     static func modifiers(_ value: String) throws -> [String] {
         let parts = value

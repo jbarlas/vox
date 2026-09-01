@@ -59,19 +59,31 @@ public final class ConfigStore {
         }
     }
 
+    private static let backupTimestamp: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        return formatter
+    }()
+
     /// Moves an unreadable config aside, returning where it went. Callers do
     /// this before writing over a file they could not parse, so hand-edited
     /// settings survive a syntax error.
     @discardableResult
     public func quarantineUnreadableFile() throws -> URL? {
         guard configExists else { return nil }
-        let backup = paths.configFile
-            .deletingLastPathComponent()
-            .appendingPathComponent("config.invalid.json")
+        // Timestamped: a second bad config must not erase the first recovery
+        // copy, which may be the one the user actually wants back.
+        let directory = paths.configFile.deletingLastPathComponent()
+        let stamp = Self.backupTimestamp.string(from: Date())
+        var backup = directory.appendingPathComponent("config.invalid-\(stamp).json")
+        var suffix = 2
+        while fileManager.fileExists(atPath: backup.path) {
+            backup = directory.appendingPathComponent("config.invalid-\(stamp)-\(suffix).json")
+            suffix += 1
+        }
         do {
-            if fileManager.fileExists(atPath: backup.path) {
-                try fileManager.removeItem(at: backup)
-            }
             try fileManager.moveItem(at: paths.configFile, to: backup)
         } catch {
             throw VoxError.config(
