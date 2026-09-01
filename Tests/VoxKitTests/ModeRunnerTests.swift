@@ -43,7 +43,7 @@ final class ModeRunnerTests: XCTestCase {
 
         let request = try XCTUnwrap(client.lastRequest)
         XCTAssertEqual(request.model, LLMConfig.default.model)
-        XCTAssertEqual(request.userText, "uh check deploy logs")
+        XCTAssertEqual(request.userText, "<transcript>uh check deploy logs</transcript>")
         XCTAssertEqual(request.systemPrompt, ModeDefinition.instructionPrompt.prompt)
         XCTAssertEqual(request.temperature, LLMConfig.default.temperature)
         XCTAssertEqual(result.text, "Check the deploy logs for errors.")

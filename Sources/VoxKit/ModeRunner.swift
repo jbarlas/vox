@@ -49,10 +49,15 @@ public struct ModeRunner: Sendable {
                 return ModeResult(text: "", mode: mode.name, kind: .llm, llmModel: nil)
             }
             let model = mode.model ?? llmConfig.model
+            // Sent as a plain user-role message, a transcript that happens to
+            // talk about "the LLM" or "this transcript" reads to a small
+            // model as a live message directed at it, not data to edit — it
+            // answers instead of editing. Delimiting it heads that off; the
+            // built-in prompts below are written to match.
             let request = ChatCompletionRequest(
                 model: model,
                 systemPrompt: mode.prompt ?? "",
-                userText: trimmed,
+                userText: "<transcript>\(trimmed)</transcript>",
                 temperature: mode.temperature ?? llmConfig.temperature,
                 maxOutputTokens: llmConfig.maxOutputTokens
             )
