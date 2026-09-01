@@ -124,6 +124,12 @@ the exit code is nonzero:
 
 `schema_version` is bumped only for breaking changes to this envelope.
 
+A mode failure is the one exception to the table: whisper.cpp has already
+succeeded by then, so `result.transcript` falls back to `raw_transcript`, the
+envelope stays `ok: true` with exit 0, and `result.mode_error` describes what
+did not run. Scripts that require the mode's output should check
+`result.mode_error` rather than the exit code alone.
+
 ## Configuration
 
 One JSON file is shared by the CLI and the app, at
