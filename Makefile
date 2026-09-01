@@ -41,6 +41,10 @@ app: whisper ## Build the menu bar app bundle into dist/Vox.app
 	$(SWIFT) build -c $(CONFIGURATION) --product VoxApp
 	$(SWIFT) build -c $(CONFIGURATION) --product vox
 	CONFIGURATION=$(CONFIGURATION) ./scripts/bundle-app.sh
+	@installed="$$(command -v vox 2>/dev/null)"; \
+	if [ -n "$$installed" ] && ! cmp -s "$(VOX)" "$$installed" 2>/dev/null; then \
+		echo "==> Note: $$installed is out of date with the CLI just built; run 'make install' too, or the app and the installed vox will read/write config.json on different schemas."; \
+	fi
 
 sign: ## Sign dist/Vox.app (ad-hoc unless DEVELOPER_ID is set)
 	./scripts/sign.sh
