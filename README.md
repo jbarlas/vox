@@ -223,12 +223,12 @@ vox record --mode bullets
 
 A fully local setup needs two more things running alongside Vox: a local
 inference server and a router. Recommended: [LiteLLM](https://github.com/BerriAI/litellm)
-for the router — it speaks the same near-ubiquitous OpenAI-compatible
-protocol as everything else here — and [Ollama](https://ollama.com) for the
-inference server, lightweight to install and just as compatible. Together
-they make adding a cloud provider later a config change (see Providers
-below), not a different setup. Any other OpenAI-compatible local server
-(llama.cpp's own server, vLLM, LM Studio) works too.
+for the router, since it uses the same OpenAI-compatible protocol that most
+tools already support, and [Ollama](https://ollama.com) for the inference
+server, since it's lightweight to install and works with LiteLLM out of the
+box. This combination also makes it easy to add a cloud provider later; see
+Providers below. Any other OpenAI-compatible local server, such as
+llama.cpp's own server, vLLM, or LM Studio, works too.
 
 Recommended model: [`phi4-mini`](https://ollama.com/library/phi4-mini) —
 small, fast, and not a reasoning model. A reasoning model spends its output
