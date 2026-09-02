@@ -351,6 +351,9 @@ private struct VocabularySettings: View {
                 Spacer()
                 Button("Save") { save() }
             }
+
+            Divider()
+            CorpusVocabularySection()
         }
         .onAppear { text = state.config.vocabulary.joined(separator: "\n") }
     }
@@ -364,6 +367,57 @@ private struct VocabularySettings: View {
         let normalized = VocabInjector.normalize(text.split(separator: "\n").map(String.init))
         state.save { $0.vocabulary = normalized }
         text = state.config.vocabulary.joined(separator: "\n")
+    }
+}
+
+/// Read-only: `vox vocab seed`/`refresh` are the only way to change this,
+/// same as the CLI. `VoxPaths()` resolves the same $VOX_HOME/default
+/// location AppState's own paths do, since both just read the environment.
+private struct CorpusVocabularySection: View {
+    @State private var corpus: CorpusVocabulary?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Seeded from your notes").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                if corpus != nil {
+                    Button("Show in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([
+                            CorpusVocabularyStore().paths.corpusVocabularyFile
+                        ])
+                    }
+                    .font(.caption)
+                }
+            }
+            if let corpus, !corpus.activeTerms.isEmpty {
+                Text(
+                    "\(corpus.activeTerms.count) terms from "
+                        + "\(corpus.sources.joined(separator: ", ")), seeded "
+                        + corpus.generatedAt.formatted(date: .abbreviated, time: .shortened)
+                )
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                List(corpus.activeTerms, id: \.term) { term in
+                    HStack {
+                        Text(term.term)
+                        Spacer()
+                        Text(String(format: "%.1f", term.score))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(minHeight: 80, maxHeight: 160)
+            } else {
+                Text(
+                    "None yet. `vox vocab seed <path>` on a folder of your notes adds "
+                        + "project-specific terms whisper.cpp wouldn't otherwise know."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .onAppear { corpus = try? CorpusVocabularyStore().load() }
     }
 }
 
