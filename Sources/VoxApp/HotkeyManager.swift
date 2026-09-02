@@ -6,15 +6,26 @@ import VoxKit
 ///
 /// Chosen over a `CGEvent` tap because it needs no Accessibility permission and
 /// reports key release, which press-and-hold activation depends on.
+///
+/// One instance per chord. Every instance's handler sees every hotkey event
+/// the app registered, so each filters on its own `Role` — without that,
+/// pressing the fix-last chord would also start a recording.
 final class HotkeyManager {
+    /// Which chord an instance owns; doubles as the Carbon hotkey ID.
+    enum Role: UInt32 {
+        case record = 1
+        case fixLast = 2
+    }
+
+    private let role: Role
     private let onPress: () -> Void
     private let onRelease: () -> Void
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandler: EventHandlerRef?
     private static let signature = OSType(0x564F_5820)  // 'VOX '
-    private static let identifier: UInt32 = 1
 
-    init(onPress: @escaping () -> Void, onRelease: @escaping () -> Void) {
+    init(role: Role = .record, onPress: @escaping () -> Void, onRelease: @escaping () -> Void = {}) {
+        self.role = role
         self.onPress = onPress
         self.onRelease = onRelease
     }
@@ -52,6 +63,19 @@ final class HotkeyManager {
             { _, event, userData in
                 guard let event, let userData else { return OSStatus(eventNotHandledErr) }
                 let manager = Unmanaged<HotkeyManager>.fromOpaque(userData).takeUnretainedValue()
+                var hotKeyID = EventHotKeyID()
+                let status = GetEventParameter(
+                    event,
+                    EventParamName(kEventParamDirectObject),
+                    EventParamType(typeEventHotKeyID),
+                    nil,
+                    MemoryLayout<EventHotKeyID>.size,
+                    nil,
+                    &hotKeyID
+                )
+                guard status == noErr, hotKeyID.signature == HotkeyManager.signature,
+                    hotKeyID.id == manager.role.rawValue
+                else { return OSStatus(eventNotHandledErr) }
                 let kind = GetEventKind(event)
                 // Carbon delivers on the main thread, but the handlers touch
                 // @MainActor state, so hop explicitly.
@@ -70,7 +94,7 @@ final class HotkeyManager {
             &eventHandler
         )
 
-        let hotKeyID = EventHotKeyID(signature: Self.signature, id: Self.identifier)
+        let hotKeyID = EventHotKeyID(signature: Self.signature, id: role.rawValue)
         let status = RegisterEventHotKey(
             UInt32(keyCode),
             modifiers,
@@ -80,7 +104,7 @@ final class HotkeyManager {
             &hotKeyRef
         )
         if status != noErr {
-            NSLog("Vox: could not register the global hotkey (status \(status)); it may be taken by another app.")
+            NSLog("Vox: could not register the \(role) hotkey (status \(status)); it may be taken by another app.")
         }
     }
 

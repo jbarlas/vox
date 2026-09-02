@@ -79,6 +79,31 @@ recording started, recording stopped, dictation finished, and failure. The
 overlay and each sound are configurable in Settings → Feedback, or under
 `feedback.*` via `vox config set`.
 
+### Correcting a transcript
+
+Two optional ways to hand Vox the text you actually meant, both off by default
+(Settings → Corrections, or `corrections.*` via `vox config set`):
+
+- **Fix last transcript** — a second global hotkey (default **⌃⌥⇧Space**, the
+  record chord plus Shift) reopens the most recent transcript in an editable box
+  under the menu bar. Return copies the corrected text back to the clipboard;
+  Esc closes it. With nothing dictated yet it says so and goes away. Also
+  reachable from the popover's "Fix…" link.
+- **Preview before paste** — each finished transcript pauses in the same box
+  before it is copied or pasted. Left alone, it is delivered as usual after
+  `corrections.preview.idle_timeout_seconds` (1.5s). Start typing and it waits
+  for Return (deliver the edit) or Esc (discard). `corrections.preview.display`
+  is `always`, or `lowConfidence` to pause only when whisper.cpp's weakest
+  segment falls below `corrections.preview.confidence_threshold` (mean per-token
+  log-probability, default -0.6).
+
+An edit made in either box is saved as a `(raw, corrected)` pair under
+`~/Library/Application Support/Vox/corrections/`, one JSON file each, tagged
+with which surface and which mode (raw/cleanup/LLM) produced it, alongside the
+pre-mode whisper.cpp text and its confidence. `corrections/telemetry.json`
+counts, per surface, how often it was shown, edited, confirmed untouched,
+cancelled or auto-committed. Nothing leaves the Mac.
+
 ## CLI
 
 | Command | Purpose |
@@ -177,7 +202,9 @@ Notable keys: `model`, `default_mode`, `language`, `vocab`, `hotkey.*`,
 `recording.silence_threshold_db`, `output.destination`,
 `output.session_history_limit` (`null`/`off` keeps every entry forever),
 `feedback.*`, `llm.provider`, `llm.base_url`, `llm.model`, `llm.api_key_env_var`,
-`llm.max_output_tokens` (`null` by default — omits the cap entirely).
+`llm.max_output_tokens` (`null` by default — omits the cap entirely),
+`corrections.fix_last.*` and `corrections.preview.*` (see
+[Correcting a transcript](#correcting-a-transcript)).
 
 Vox never stores an API key: `llm.api_key_env_var` names the environment variable
 to read it from.

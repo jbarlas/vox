@@ -21,6 +21,8 @@ struct SettingsView: View {
                 .tabItem { Label("Output", systemImage: "doc.on.clipboard") }
             FeedbackSettings(state: state)
                 .tabItem { Label("Feedback", systemImage: "speaker.wave.2") }
+            CorrectionsSettings(state: state)
+                .tabItem { Label("Corrections", systemImage: "pencil.line") }
         }
         .padding(16)
         .frame(minWidth: 600, minHeight: 440)
@@ -62,7 +64,12 @@ private struct GeneralSettings: View {
             Section("Hotkey") {
                 Toggle("Enable global hotkey", isOn: binding(\.hotkey.enabled))
                 LabeledContent("Shortcut") {
-                    HotkeyRecorderButton(state: state)
+                    HotkeyRecorderButton(hotkey: state.config.hotkey) { keyCode, modifiers in
+                        state.save {
+                            $0.hotkey.keyCode = keyCode
+                            $0.hotkey.modifiers = modifiers
+                        }
+                    }
                 }
                 Picker("Activation", selection: activationBinding) {
                     Text("Press and hold").tag(HotkeyConfig.Activation.pressAndHold)
@@ -194,10 +201,12 @@ private struct GeneralSettings: View {
 }
 
 /// Captures the next key chord pressed while "Record new shortcut…" is
-/// active and writes it straight to `hotkey.key_code`/`hotkey.modifiers`, in
-/// place of editing them by hand with `vox config set`.
+/// active and hands it to `save`, in place of editing `key_code`/`modifiers`
+/// by hand with `vox config set`. `save` returns the message of a rejected
+/// chord (one that collides with the other hotkey, say) to show inline.
 private struct HotkeyRecorderButton: View {
-    @ObservedObject var state: AppState
+    let hotkey: HotkeyConfig
+    let save: (UInt16, [String]) -> String?
     @State private var isRecording = false
     @State private var monitor: Any?
     @State private var warning: String?
@@ -208,7 +217,7 @@ private struct HotkeyRecorderButton: View {
                 Text(
                     isRecording
                         ? "Press the new shortcut… (Esc to cancel)"
-                        : HotkeyManager.displayString(state.config.hotkey)
+                        : HotkeyManager.displayString(hotkey)
                 )
                 .foregroundStyle(isRecording ? .secondary : .primary)
                 Button(isRecording ? "Cancel" : "Record new shortcut…") {
@@ -255,11 +264,111 @@ private struct HotkeyRecorderButton: View {
             warning = "Include at least one modifier key (⌃⌥⇧⌘)."
             return
         }
-        state.save {
-            $0.hotkey.keyCode = event.keyCode
-            $0.hotkey.modifiers = modifiers
-        }
+        warning = save(event.keyCode, modifiers)
         stopRecording()
+    }
+}
+
+private struct CorrectionsSettings: View {
+    @ObservedObject var state: AppState
+    @State private var error: String?
+
+    var body: some View {
+        Form {
+            Section("Fix last transcript") {
+                Toggle("Enable the fix-last hotkey", isOn: binding(\.corrections.fixLast.enabled))
+                LabeledContent("Shortcut") {
+                    HotkeyRecorderButton(hotkey: state.config.corrections.fixLast.hotkey) { keyCode, modifiers in
+                        state.save {
+                            $0.corrections.fixLast.keyCode = keyCode
+                            $0.corrections.fixLast.modifiers = modifiers
+                        }
+                    }
+                }
+                .disabled(!state.config.corrections.fixLast.enabled)
+                Text(
+                    "Reopens the most recent transcript in an editable box. Return copies the corrected "
+                        + "text to the clipboard; Esc closes it."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            Section("Preview before paste") {
+                Toggle("Show an editable preview before delivering", isOn: binding(\.corrections.preview.enabled))
+                Group {
+                    LabeledContent("Auto-commit after") {
+                        Stepper(
+                            String(format: "%.1fs", state.config.corrections.preview.idleTimeoutSeconds),
+                            value: binding(\.corrections.preview.idleTimeoutSeconds),
+                            in: 0.5...10,
+                            step: 0.25
+                        )
+                    }
+                    Picker("Show the preview", selection: binding(\.corrections.preview.display)) {
+                        Text("For every dictation").tag(PreviewConfig.Display.always)
+                        Text("Only when whisper was unsure").tag(PreviewConfig.Display.lowConfidence)
+                    }
+                    if state.config.corrections.preview.display == .lowConfidence {
+                        LabeledContent("Unsure below") {
+                            Stepper(
+                                String(format: "%.2f", state.config.corrections.preview.confidenceThreshold),
+                                value: binding(\.corrections.preview.confidenceThreshold),
+                                in: -3...0,
+                                step: 0.05
+                            )
+                        }
+                        Text(
+                            "Mean log-probability of the weakest segment. 0 is certain; whisper.cpp itself "
+                                + "retries a segment below -1.0."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                }
+                .disabled(!state.config.corrections.preview.enabled)
+                Text(
+                    "The transcript pauses in a box under the menu bar. Left alone it is delivered as usual "
+                        + "after the timeout; typing keeps it open until Return (deliver) or Esc (discard)."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            Section("Local data") {
+                LabeledContent("Fix-last", value: summary(state.correctionTelemetry.fixLast))
+                LabeledContent("Preview", value: summary(state.correctionTelemetry.preview))
+                HStack {
+                    Text("\(state.correctionCount) correction pairs saved").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Show in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([state.correctionsDirectoryURL])
+                    }
+                }
+                Text("Everything stays on this Mac; nothing is sent anywhere.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let error {
+                Text(error).font(.caption).foregroundStyle(.orange)
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { state.refreshCorrectionStats() }
+    }
+
+    private func summary(_ counts: CorrectionTelemetry.VariantCounts) -> String {
+        "\(counts.invocations) shown, \(counts.corrections) corrected"
+    }
+
+    private func binding<Value>(_ keyPath: WritableKeyPath<VoxConfig, Value>) -> Binding<Value> {
+        Binding(
+            get: { state.config[keyPath: keyPath] },
+            set: { newValue in
+                error = state.save { $0[keyPath: keyPath] = newValue }
+            }
+        )
     }
 }
 

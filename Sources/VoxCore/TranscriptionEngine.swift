@@ -5,11 +5,17 @@ public struct TranscriptSegment: Sendable, Equatable {
     public let text: String
     public let startMs: Int
     public let endMs: Int
+    /// Mean natural-log probability of the segment's text tokens, and how
+    /// many there were. `nil` when the engine does not report probabilities.
+    public let meanLogprob: Double?
+    public let tokenCount: Int
 
-    public init(text: String, startMs: Int, endMs: Int) {
+    public init(text: String, startMs: Int, endMs: Int, meanLogprob: Double? = nil, tokenCount: Int = 0) {
         self.text = text
         self.startMs = startMs
         self.endMs = endMs
+        self.meanLogprob = meanLogprob
+        self.tokenCount = tokenCount
     }
 }
 
@@ -23,6 +29,16 @@ public struct TranscriptionResult: Sendable, Equatable {
         self.text = text
         self.segments = segments
         self.language = language
+    }
+
+    /// Per-segment probabilities folded into the summary the preview gate and
+    /// correction records use. `nil` when no segment reported any.
+    public var confidence: TranscriptConfidence? {
+        TranscriptConfidence(
+            segmentLogprobs: segments.compactMap { segment in
+                segment.meanLogprob.map { (logprob: $0, tokenCount: segment.tokenCount) }
+            }
+        )
     }
 }
 
