@@ -139,6 +139,11 @@ public final class DictationPipeline {
             )
         )
         timings.transcribeMs = Self.elapsedMs(since: transcribeClock)
+        // initial_prompt only biases the decode; it doesn't force whisper to
+        // spell a seeded compound term as one word over its much more common
+        // split form ("Light switch" for "Lightswitch"). Rejoin those here,
+        // on the raw transcript, so both it and every mode see the fix.
+        let correctedText = VocabCorrector.apply(vocabulary: vocabulary.map(\.term), to: transcription.text)
 
         onStage?(.processingMode(mode.name))
         let modeClock = Date()
@@ -150,13 +155,13 @@ public final class DictationPipeline {
         let modeError: VoxError?
         do {
             modeResult = try await modeRunner.run(
-                transcript: transcription.text,
+                transcript: correctedText,
                 mode: mode,
                 vocabulary: vocabulary.map(\.term)
             )
             modeError = nil
         } catch {
-            modeResult = ModeResult(text: transcription.text, mode: mode.name, kind: mode.kind)
+            modeResult = ModeResult(text: correctedText, mode: mode.name, kind: mode.kind)
             modeError = VoxError.wrap(error, code: .llm, message: "Mode '\(mode.name)' failed")
         }
         timings.modeMs = Self.elapsedMs(since: modeClock)
@@ -167,7 +172,7 @@ public final class DictationPipeline {
 
         return RecordResult(
             transcript: modeResult.text,
-            rawTranscript: transcription.text,
+            rawTranscript: correctedText,
             mode: modeResult.mode,
             modeKind: modeResult.kind,
             model: model.id,

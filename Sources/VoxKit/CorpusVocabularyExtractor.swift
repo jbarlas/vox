@@ -22,6 +22,18 @@ import Foundation
 public struct CorpusVocabularyExtractor: Sendable {
     public static let supportedExtensions: Set<String> = ["md", "txt"]
 
+    /// Directory names that mean "dependency, not notes" wherever they occur
+    /// in the tree, so seeding a project root doesn't pull in a vendored
+    /// library's docs. Matched case-insensitively; the given root itself is
+    /// exempt, so `vox vocab seed ./vendor` still works if asked directly.
+    private static let skippedDirectoryNames: Set<String> = [
+        "vendor", "node_modules", "build", "dist", "pods", "derivedata", "target",
+    ]
+
+    /// `.txt`, but always build tooling rather than notes, regardless of
+    /// which directory it turns up in.
+    private static let skippedFilenames: Set<String> = ["cmakelists.txt"]
+
     public struct Result: Sendable, Equatable {
         public var terms: [CorpusTerm]
         public var filesScanned: Int
@@ -35,7 +47,9 @@ public struct CorpusVocabularyExtractor: Sendable {
     }
 
     /// Every `.md`/`.txt` file at or under `paths`, sorted for stable output.
-    /// Hidden directories (`.obsidian`, `.git`) are skipped.
+    /// Hidden directories (`.obsidian`, `.git`) and vendored-dependency
+    /// directories (`vendor`, `node_modules`, `build`, ...) are skipped, as is
+    /// `CMakeLists.txt` by name — all code, not notes, despite the extension.
     public static func textFiles(under paths: [URL], fileManager: FileManager = .default) throws -> [URL] {
         var files: [URL] = []
         for path in paths {
@@ -52,14 +66,21 @@ public struct CorpusVocabularyExtractor: Sendable {
             guard
                 let enumerator = fileManager.enumerator(
                     at: path,
-                    includingPropertiesForKeys: [.isRegularFileKey],
+                    includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey],
                     options: [.skipsHiddenFiles, .skipsPackageDescendants]
                 )
             else { continue }
             for case let url as URL in enumerator {
-                guard supportedExtensions.contains(url.pathExtension.lowercased()) else { continue }
-                let values = try? url.resourceValues(forKeys: [.isRegularFileKey])
+                let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey])
+                if values?.isDirectory == true {
+                    if skippedDirectoryNames.contains(url.lastPathComponent.lowercased()) {
+                        enumerator.skipDescendants()
+                    }
+                    continue
+                }
                 guard values?.isRegularFile == true else { continue }
+                guard supportedExtensions.contains(url.pathExtension.lowercased()) else { continue }
+                guard !skippedFilenames.contains(url.lastPathComponent.lowercased()) else { continue }
                 files.append(url)
             }
         }
