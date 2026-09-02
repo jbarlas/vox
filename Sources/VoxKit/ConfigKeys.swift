@@ -34,6 +34,10 @@ public enum ConfigKeys {
         "llm.timeout_seconds",
         "llm.max_output_tokens",
         "llm.allow_insecure_http",
+        "live_preview.enabled",
+        "live_preview.model",
+        "live_preview.window_seconds",
+        "live_preview.interval_seconds",
     ]
 
     public static func get(_ key: String, from config: VoxConfig) throws -> String {
@@ -69,6 +73,10 @@ public enum ConfigKeys {
         case "llm.timeout_seconds": return String(config.llm.timeoutSeconds)
         case "llm.max_output_tokens": return config.llm.maxOutputTokens.map { String($0) } ?? "unset"
         case "llm.allow_insecure_http": return String(config.llm.allowInsecureHTTP ?? false)
+        case "live_preview.enabled": return String(config.livePreview.enabled)
+        case "live_preview.model": return config.livePreview.model
+        case "live_preview.window_seconds": return String(config.livePreview.windowSeconds)
+        case "live_preview.interval_seconds": return String(config.livePreview.intervalSeconds)
         default: throw unknownKey(key)
         }
     }
@@ -164,6 +172,14 @@ public enum ConfigKeys {
             config.llm.maxOutputTokens = isUnset(value) ? nil : try integer(value, key, in: 1...1_000_000)
         case "llm.allow_insecure_http":
             config.llm.allowInsecureHTTP = try bool(value, key)
+        case "live_preview.enabled":
+            config.livePreview.enabled = try bool(value, key)
+        case "live_preview.model":
+            config.livePreview.model = value
+        case "live_preview.window_seconds":
+            config.livePreview.windowSeconds = try number(value, key)
+        case "live_preview.interval_seconds":
+            config.livePreview.intervalSeconds = try number(value, key)
         default:
             throw unknownKey(key)
         }

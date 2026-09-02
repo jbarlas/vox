@@ -265,6 +265,7 @@ private struct HotkeyRecorderButton: View {
 
 private struct FeedbackSettings: View {
     @ObservedObject var state: AppState
+    @State private var downloadingPreviewModel: String?
 
     var body: some View {
         Form {
@@ -288,8 +289,60 @@ private struct FeedbackSettings: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
+
+            Section("Live preview") {
+                Toggle("Show a live preview while recording", isOn: binding(\.livePreview.enabled))
+                    .disabled(!state.config.feedback.showOverlay)
+                Picker("Preview model", selection: binding(\.livePreview.model)) {
+                    ForEach(ModelCatalog.all, id: \.id) { model in
+                        Text(model.id).tag(model.id)
+                    }
+                }
+                .disabled(!state.config.livePreview.enabled)
+                if let downloadingPreviewModel {
+                    Text("Downloading \(downloadingPreviewModel)…").font(.caption).foregroundStyle(
+                        .secondary)
+                } else if state.config.livePreview.enabled, !previewModelInstalled {
+                    HStack {
+                        Text("Not downloaded yet — no preview until it is.").font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button("Download now") { downloadPreviewModel() }
+                    }
+                }
+                LabeledContent("Refresh every") {
+                    Stepper(
+                        String(format: "%.1fs", state.config.livePreview.intervalSeconds),
+                        value: binding(\.livePreview.intervalSeconds),
+                        in: 0.5...5,
+                        step: 0.5
+                    )
+                }
+                .disabled(!state.config.livePreview.enabled)
+                Text(
+                    "Rough, low-confidence text from a fast model, shown dimmed in the waveform "
+                        + "strip so you can see dictation is working. It is thrown away when you stop; "
+                        + "the accurate full pass with your main model is what gets delivered. Uses "
+                        + "extra CPU/GPU while recording."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
+    }
+
+    private var previewModelInstalled: Bool {
+        guard let model = state.config.livePreview.resolvedModel else { return false }
+        return ModelManager().isInstalled(model)
+    }
+
+    private func downloadPreviewModel() {
+        guard let model = state.config.livePreview.resolvedModel else { return }
+        downloadingPreviewModel = model.id
+        Task {
+            _ = try? await ModelManager().ensureAvailable(model)
+            downloadingPreviewModel = nil
+        }
     }
 
     private func soundPicker(
