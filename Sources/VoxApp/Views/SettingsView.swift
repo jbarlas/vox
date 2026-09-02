@@ -606,6 +606,11 @@ private struct LLMSettings: View {
     @State private var model = ""
     @State private var apiKeyEnvVar = ""
     @State private var error: String?
+    /// What `GET {baseURL}/models` returned for a local endpoint; `nil` while
+    /// unqueried, hosted, or after a failed probe (see `modelListError`).
+    @State private var installedModels: [String]?
+    @State private var modelListError: String?
+    @State private var isLoadingModels = false
 
     /// Tag for "none of the presets" — an endpoint the catalog doesn't know.
     private static let customProvider = ""
@@ -632,22 +637,7 @@ private struct LLMSettings: View {
                 }
             }
 
-            if let provider = LLMProviderCatalog.provider(id: providerBinding.wrappedValue) {
-                Section("Models on \(provider.displayName)") {
-                    // Providers share no model ids, so switching provider leaves
-                    // the old model behind; these fill the field in one click.
-                    ForEach(provider.exampleModels, id: \.self) { example in
-                        Button(example) { model = example }
-                            .buttonStyle(.link)
-                    }
-                    Text(
-                        (provider.note.map { $0 + " " } ?? "")
-                            + "Examples only — any model the endpoint serves works."
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-            }
+            modelsSection
 
             Section("Per-mode overrides") {
                 Text(
@@ -661,6 +651,113 @@ private struct LLMSettings: View {
         .formStyle(.grouped)
         .onAppear { load() }
         .task(id: state.config.llm) { load() }
+        // Runs on appear and whenever the endpoint changes, and is cancelled
+        // when the pane goes away — so the probe never polls. The short sleep
+        // coalesces keystrokes while a custom URL is being typed.
+        .task(id: baseURL) {
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            await refreshModelList()
+        }
+    }
+
+    private var provider: LLMProvider? {
+        LLMProviderCatalog.provider(id: providerBinding.wrappedValue)
+    }
+
+    private var isLocalEndpoint: Bool {
+        ModelListClient.shouldQuery(edited())
+    }
+
+    /// Live list for a local endpoint, the catalog's examples otherwise, with
+    /// the applied model marked in either case.
+    @ViewBuilder private var modelsSection: some View {
+        let source: ModelListSource = installedModels == nil ? .examples : .installed
+        let listed = installedModels ?? provider?.exampleModels ?? []
+        let active = state.config.llm.model
+        let host = URL(string: baseURL)?.host ?? baseURL
+        if provider != nil || isLocalEndpoint {
+            Section {
+                // Providers share no model ids, so switching provider leaves
+                // the old model behind; these fill the field in one click.
+                ForEach(ModelListSource.rows(models: listed, active: active), id: \.self) { name in
+                    modelRow(name, isActive: name == active, isListed: listed.contains(name))
+                }
+                if listed.isEmpty && active.isEmpty {
+                    Text("No models reported.").font(.caption).foregroundStyle(.secondary)
+                }
+                Text(modelListFooter(source: source, host: host))
+                    .font(.caption)
+                    .foregroundStyle(source == .examples && isLocalEndpoint ? Color.orange : Color.secondary)
+            } header: {
+                HStack {
+                    Text("Models on \(provider?.displayName ?? host)")
+                    Spacer()
+                    if isLocalEndpoint {
+                        if isLoadingModels {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Button("Refresh") { Task { await refreshModelList() } }
+                                .buttonStyle(.link)
+                                .font(.caption)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func modelRow(_ name: String, isActive: Bool, isListed: Bool) -> some View {
+        HStack {
+            Button(name) { model = name }
+                .buttonStyle(.link)
+                .fontWeight(isActive ? .semibold : .regular)
+            if isActive {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.tint)
+                    .accessibilityLabel("Active model")
+                Text(isListed ? "active" : "active — not in this list")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+    }
+
+    private func modelListFooter(source: ModelListSource, host: String) -> String {
+        let note = provider?.note.map { $0 + " " } ?? ""
+        switch source {
+        case .installed:
+            return note + "Installed — as reported by \(host) via /models."
+        case .examples where isLocalEndpoint:
+            let reason = modelListError.map { " (\($0))" } ?? ""
+            return note + "Examples only — \(host) didn't report its models\(reason). "
+                + "Any model the endpoint serves works."
+        case .examples:
+            return note + "Examples only — any model the endpoint serves works."
+        }
+    }
+
+    @MainActor
+    private func refreshModelList() async {
+        let config = edited()
+        guard ModelListClient.shouldQuery(config) else {
+            installedModels = nil
+            modelListError = nil
+            return
+        }
+        isLoadingModels = true
+        defer { isLoadingModels = false }
+        do {
+            let models = try await ModelListClient(config: config).listModels()
+            guard !Task.isCancelled else { return }
+            installedModels = models
+            modelListError = nil
+        } catch {
+            guard !Task.isCancelled else { return }
+            installedModels = nil
+            modelListError = (error as? VoxError)?.message ?? error.localizedDescription
+        }
     }
 
     /// Whether the key is visible to *this* process, which for an app launched
