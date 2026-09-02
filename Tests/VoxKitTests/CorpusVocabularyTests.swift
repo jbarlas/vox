@@ -87,7 +87,7 @@ final class CorpusVocabularyTests: XCTestCase {
 
     func testMergePutsUserFirstAndDropsCollisions() {
         let corpus = CorpusVocabulary(
-            sources: ["/notes"],
+            sources: [CorpusSource(path: "/notes")],
             terms: [
                 CorpusTerm(term: "kubernetes", score: 9, count: 5),
                 CorpusTerm(term: "Zorblatt", score: 8, count: 4),
@@ -123,8 +123,9 @@ final class CorpusVocabularyTests: XCTestCase {
         XCTAssertNil(try store.load())
         XCTAssertNil(store.loadForInference())
 
+        let addedAt = Date(timeIntervalSince1970: 1_700_000_000)
         let vocabulary = CorpusVocabulary(
-            sources: ["/notes"],
+            sources: [CorpusSource(path: "/notes", addedAt: addedAt)],
             options: CorpusExtractionOptions(maxTerms: 50, minCount: 3, minLength: 3),
             filesScanned: 2,
             tokensScanned: 100,
@@ -136,7 +137,7 @@ final class CorpusVocabularyTests: XCTestCase {
         XCTAssertEqual(loaded.terms, vocabulary.terms)
         XCTAssertEqual(loaded.options, vocabulary.options)
         XCTAssertEqual(loaded.excluded, ["noise"])
-        XCTAssertEqual(loaded.sources, ["/notes"])
+        XCTAssertEqual(loaded.sources, [CorpusSource(path: "/notes", addedAt: addedAt)])
 
         let json = try String(contentsOf: store.paths.corpusVocabularyFile, encoding: .utf8)
         XCTAssertTrue(json.contains("\"schema_version\""))
@@ -145,6 +146,59 @@ final class CorpusVocabularyTests: XCTestCase {
         try Data("not json".utf8).write(to: store.paths.corpusVocabularyFile)
         XCTAssertThrowsError(try store.load())
         XCTAssertNil(store.loadForInference())
+    }
+
+    func testDecodesLegacyStringSourcesBackfillingAddedAt() throws {
+        let generatedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let json = """
+            {
+              "schema_version": 1,
+              "generated_at": "\(ISO8601.string(from: generatedAt))",
+              "sources": ["/notes", "/docs"],
+              "options": {"max_terms": 200, "min_count": 2, "min_length": 3, "min_score": 2},
+              "files_scanned": 1,
+              "tokens_scanned": 10,
+              "terms": [],
+              "excluded": []
+            }
+            """
+        let vocabulary = try VoxJSON.decoder().decode(CorpusVocabulary.self, from: Data(json.utf8))
+        XCTAssertEqual(vocabulary.sources.map(\.path), ["/notes", "/docs"])
+        XCTAssertEqual(vocabulary.sources.map(\.addedAt), [generatedAt, generatedAt])
+    }
+
+    func testAddSourcesTracksNewFolderAndPreservesExistingAddedAt() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vox-corpus-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = root.appendingPathComponent("first", isDirectory: true)
+        let second = root.appendingPathComponent("second", isDirectory: true)
+        try FileManager.default.createDirectory(at: first, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: second, withIntermediateDirectories: true)
+        try "Zorblatt Zorblatt".write(to: first.appendingPathComponent("a.md"), atomically: true, encoding: .utf8)
+        try "Quuxfoo Quuxfoo".write(to: second.appendingPathComponent("b.md"), atomically: true, encoding: .utf8)
+
+        let store = CorpusVocabularyStore(paths: VoxPaths(supportDirectory: root.appendingPathComponent("support")))
+        let afterFirst = try store.addSources([first.path])
+        XCTAssertEqual(afterFirst.sources.map(\.path), [first.path])
+        let firstAddedAt = try XCTUnwrap(afterFirst.sources.first).addedAt
+
+        let afterSecond = try store.addSources([second.path])
+        XCTAssertEqual(Set(afterSecond.sources.map(\.path)), [first.path, second.path])
+        // Adding a new source re-syncs everything, but an already-tracked
+        // source's addedAt must not be disturbed by that re-sync.
+        let preserved = try XCTUnwrap(afterSecond.sources.first { $0.path == first.path })
+        // Round-tripped through ISO-8601 (second precision), so compare at
+        // that resolution rather than exact `Date` equality.
+        XCTAssertEqual(ISO8601.string(from: preserved.addedAt), ISO8601.string(from: firstAddedAt))
+        XCTAssertEqual(Set(afterSecond.terms.map(\.term)), ["Zorblatt", "Quuxfoo"])
+
+        let afterRemove = try store.removeSources([first.path])
+        XCTAssertEqual(afterRemove?.sources.map(\.path), [second.path])
+        XCTAssertEqual(afterRemove?.terms.map(\.term), ["Quuxfoo"])
+
+        XCTAssertNil(try store.removeSources([second.path]))
+        XCTAssertFalse(store.exists)
     }
 
     func testExtractFromFilesScansOnlyTextFilesRecursively() throws {

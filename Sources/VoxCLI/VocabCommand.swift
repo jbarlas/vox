@@ -12,9 +12,11 @@ struct VocabCommand: ParsableCommand {
         abstract: "Manage the vocabulary Whisper is biased toward, by hand or seeded from your notes.",
         discussion: """
             User-added terms always outrank seeded ones: they lead the whisper.cpp \
-            initial prompt, and a seeded term that collides with one is dropped.
+            initial prompt, and a seeded term that collides with one is dropped. \
+            To manage seeded folders one at a time instead of re-listing them all \
+            on every `seed`, use `vox vocab sources add/remove`.
             """,
-        subcommands: [List.self, Add.self, Remove.self, Seed.self, Refresh.self, Clear.self],
+        subcommands: [List.self, Add.self, Remove.self, Seed.self, Refresh.self, Sources.self, Clear.self],
         defaultSubcommand: List.self
     )
 
@@ -57,8 +59,9 @@ struct VocabCommand: ParsableCommand {
                 }
                 if let corpus {
                     let excluded = corpus.excluded.isEmpty ? "" : ", \(corpus.excluded.count) excluded"
+                    let sources = corpus.sources.map(\.path).joined(separator: ", ")
                     Stderr.write(
-                        "\(corpus.activeTerms.count) corpus terms\(excluded) from \(corpus.sources.joined(separator: ", ")) "
+                        "\(corpus.activeTerms.count) corpus terms\(excluded) from \(sources) "
                             + "(seeded \(ISO8601.string(from: corpus.generatedAt)))"
                     )
                 }
@@ -169,14 +172,17 @@ struct VocabCommand: ParsableCommand {
 
         func run() throws {
             do {
-                let sources = paths.map { (($0 as NSString).expandingTildeInPath as NSString).standardizingPath }
-                let previous = try CorpusVocabularyStore(paths: configOptions.paths).load()
-                try seedCorpus(
-                    sources: sources,
+                let paths = self.paths.map { (($0 as NSString).expandingTildeInPath as NSString).standardizingPath }
+                let store = CorpusVocabularyStore(paths: configOptions.paths)
+                let previous = try store.load()
+                Stderr.write("Scanning…")
+                let started = Date()
+                let vocabulary = try store.sync(
+                    sources: paths.map { CorpusSource(path: $0) },
                     options: extraction.resolved(over: .default),
-                    excluded: previous?.excluded ?? [],
-                    configOptions: configOptions
+                    excluded: previous?.excluded ?? []
                 )
+                report(vocabulary, since: started, store: store)
             } catch {
                 voxError(from: error).printToStderr()
                 throw voxExitCode(for: error)
@@ -194,21 +200,106 @@ struct VocabCommand: ParsableCommand {
 
         func run() throws {
             do {
-                guard let previous = try CorpusVocabularyStore(paths: configOptions.paths).load() else {
+                let store = CorpusVocabularyStore(paths: configOptions.paths)
+                guard let previous = try store.load() else {
                     throw VoxError.config(
                         "Nothing has been seeded yet",
                         detail: "Run `vox vocab seed <path>` first."
                     )
                 }
-                try seedCorpus(
+                Stderr.write("Scanning…")
+                let started = Date()
+                let vocabulary = try store.sync(
                     sources: previous.sources,
                     options: extraction.resolved(over: previous.options),
-                    excluded: previous.excluded,
-                    configOptions: configOptions
+                    excluded: previous.excluded
                 )
+                report(vocabulary, since: started, store: store)
             } catch {
                 voxError(from: error).printToStderr()
                 throw voxExitCode(for: error)
+            }
+        }
+    }
+
+    struct Sources: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Manage the folders `vox vocab seed` tracks, without re-specifying all of them each time.",
+            subcommands: [List.self, Add.self, Remove.self],
+            defaultSubcommand: List.self
+        )
+
+        struct List: ParsableCommand {
+            static let configuration = CommandConfiguration(abstract: "Show the tracked source folders.")
+
+            @OptionGroup var configOptions: ConfigOptions
+
+            func run() throws {
+                do {
+                    guard let corpus = try CorpusVocabularyStore(paths: configOptions.paths).load(),
+                        !corpus.sources.isEmpty
+                    else {
+                        Stderr.write("No sources tracked yet. Add one with `vox vocab sources add <path>`.")
+                        return
+                    }
+                    Stdout.write("ADDED                 PATH")
+                    for source in corpus.sources {
+                        Stdout.write("\(ISO8601.string(from: source.addedAt))  \(source.path)")
+                    }
+                } catch {
+                    voxError(from: error).printToStderr()
+                    throw voxExitCode(for: error)
+                }
+            }
+        }
+
+        struct Add: ParsableCommand {
+            static let configuration = CommandConfiguration(
+                abstract: "Track one or more additional folders and re-sync the whole corpus."
+            )
+
+            @OptionGroup var configOptions: ConfigOptions
+
+            @Argument(help: "Folders or files to add.")
+            var paths: [String]
+
+            func run() throws {
+                do {
+                    let store = CorpusVocabularyStore(paths: configOptions.paths)
+                    Stderr.write("Scanning…")
+                    let started = Date()
+                    let vocabulary = try store.addSources(paths)
+                    report(vocabulary, since: started, store: store)
+                } catch {
+                    voxError(from: error).printToStderr()
+                    throw voxExitCode(for: error)
+                }
+            }
+        }
+
+        struct Remove: ParsableCommand {
+            static let configuration = CommandConfiguration(
+                abstract: "Stop tracking a folder and re-sync the rest."
+            )
+
+            @OptionGroup var configOptions: ConfigOptions
+
+            @Argument(help: "Folders to stop tracking.")
+            var paths: [String]
+
+            func run() throws {
+                do {
+                    let store = CorpusVocabularyStore(paths: configOptions.paths)
+                    let started = Date()
+                    guard let vocabulary = try store.removeSources(paths) else {
+                        Stderr.write("No sources left; seeded vocabulary cleared.")
+                        return
+                    }
+                    report(vocabulary, since: started, store: store)
+                } catch {
+                    voxError(from: error).printToStderr()
+                    throw voxExitCode(for: error)
+                }
             }
         }
     }
@@ -256,35 +347,11 @@ struct VocabCommand: ParsableCommand {
     }
 }
 
-private func seedCorpus(
-    sources: [String],
-    options: CorpusExtractionOptions,
-    excluded: [String],
-    configOptions: ConfigOptions
-) throws {
-    let started = Date()
-    let files = try CorpusVocabularyExtractor.textFiles(under: sources.map { URL(fileURLWithPath: $0) })
-    guard !files.isEmpty else {
-        throw VoxError.config(
-            "No .md or .txt files found under: \(sources.joined(separator: ", "))"
-        )
-    }
-    Stderr.write("Scanning \(files.count) file(s)…")
-    let result = try CorpusVocabularyExtractor(options: options).extract(files: files)
-    let vocabulary = CorpusVocabulary(
-        sources: sources,
-        options: options,
-        filesScanned: result.filesScanned,
-        tokensScanned: result.tokensScanned,
-        terms: result.terms,
-        excluded: excluded
-    )
-    let store = CorpusVocabularyStore(paths: configOptions.paths)
-    _ = try store.update { $0 = vocabulary }
+private func report(_ vocabulary: CorpusVocabulary, since started: Date, store: CorpusVocabularyStore) {
     let elapsed = String(format: "%.1f", Date().timeIntervalSince(started))
     Stderr.write(
-        "Seeded \(vocabulary.activeTerms.count) terms from \(result.filesScanned) files "
-            + "(\(result.tokensScanned) tokens) in \(elapsed)s → \(store.paths.corpusVocabularyFile.path)"
+        "Seeded \(vocabulary.activeTerms.count) terms from \(vocabulary.filesScanned) files "
+            + "(\(vocabulary.tokensScanned) tokens) in \(elapsed)s → \(store.paths.corpusVocabularyFile.path)"
     )
     for term in vocabulary.activeTerms.prefix(20) {
         Stdout.write(term.term)
