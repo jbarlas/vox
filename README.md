@@ -295,6 +295,55 @@ vox config set output.session_history_limit 200        # cap it instead of keepi
 In the app, Settings → Output → History has the same controls plus "View
 session data" (opens the file) and "Clear history now".
 
+### Corrections
+
+The two correction surfaces described under
+[Correcting a transcript](#correcting-a-transcript) are off until you turn
+them on:
+
+```bash
+vox config set corrections.fix_last.enabled true
+vox config set corrections.fix_last.key_code 49                  # Space
+vox config set corrections.fix_last.modifiers control+option+shift
+vox config set corrections.preview.enabled true
+vox config set corrections.preview.idle_timeout_seconds 1.5
+vox config set corrections.preview.display lowConfidence         # or: always
+vox config set corrections.preview.confidence_threshold -0.6
+```
+
+The fix-last chord may not be identical to `hotkey.*`; `vox config set` and
+the app both reject that. Settings → Corrections has the same controls, a
+shortcut recorder, the telemetry counters, and "Show in Finder".
+
+Only an edit that actually changes the text is saved — confirming or
+auto-committing an untouched transcript just bumps a counter. Each edit is one
+file in `~/Library/Application Support/Vox/corrections/`:
+
+```json
+{
+  "schema_version": 1,
+  "id": "6E1F4C2A-…",
+  "created_at": "2026-09-02T03:41:07Z",
+  "dictated_at": "2026-09-02T03:40:58Z",
+  "variant": "preview",
+  "raw_transcript": "ship the fix to prod after the stand up",
+  "original_transcript": "Ship the fix to prod after the stand-up.",
+  "corrected_transcript": "Ship the fix to staging after the stand-up.",
+  "mode": "cleanup",
+  "mode_kind": "cleanup",
+  "model": "small.en",
+  "language": "en",
+  "confidence": { "min_segment_logprob": -0.41, "mean_logprob": -0.22, "segment_count": 1 }
+}
+```
+
+`variant` is `fixLast` or `preview`; `raw_transcript` is whisper.cpp's output
+before any mode ran, `original_transcript` is what the box showed, and
+`corrected_transcript` is what you typed. `corrections/telemetry.json` holds
+the per-variant counters (`invocations`, `corrections`, `confirmed_unchanged`,
+`cancelled`, `auto_commits`, `empty_invocations`). Both files are written
+atomically and stay on this machine; delete the directory to start over.
+
 ## Development
 
 ```bash

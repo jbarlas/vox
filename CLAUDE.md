@@ -78,3 +78,27 @@ coverage — verify changes there by actually running the CLI or the app.
   `RecordResult.modeError` set, rather than losing the already-successful
   transcription. Preserve this if you touch that code path — don't let a
   mode/LLM failure bubble up and discard a good transcript.
+
+- **The app registers two Carbon hotkeys (record + fix-last) on one
+  handler.** `HotkeyManager` tags each registration with an `EventHotKeyID`
+  (`Role.record` / `Role.fixLast`) and the handler bails unless the event's
+  id matches its own. Any third hotkey needs a new `Role` case; don't
+  register a second `HotkeyManager` with the same role.
+
+- **Variant B preview sits between whisper finishing and delivery.**
+  `AppState.finish(with:)` decides via `PreviewConfig.shouldShow(confidence:)`
+  whether to present `CorrectionPanelController` or call `deliver(_:)`
+  directly. Everything that used to happen at the end of a dictation
+  (clipboard/auto-paste, `lastTranscript`, done chime, history) now lives in
+  `deliver(_:)`; put new post-dictation side effects there, not in `finish`,
+  or they will fire before the user has confirmed the text. The panel's
+  timing rules (idle auto-commit, first keystroke disarms it, Return/Esc)
+  are all in `VoxKit/PreviewSession` and unit-tested — change them there.
+
+- **Correction records are only written for real edits.**
+  `CorrectionRecord.init?(result:corrected:variant:)` returns `nil` when the
+  trimmed text is unchanged or empty; unchanged confirms only touch
+  `corrections/telemetry.json`. The store is one file per record in
+  `<support>/corrections/` (never a shared array), so there is no
+  read-modify-write and no lock — telemetry is the only shared file there and
+  goes through `FileLock`.
