@@ -17,6 +17,19 @@ public struct CorpusTerm: Codable, Sendable, Equatable {
     }
 }
 
+/// One folder or file `vox vocab seed`/`sources add` was pointed at.
+public struct CorpusSource: Codable, Sendable, Equatable {
+    public var path: String
+    /// When this path was added to tracking. Independent of `generatedAt`,
+    /// which is when the corpus was last (re-)scanned as a whole.
+    public var addedAt: Date
+
+    public init(path: String, addedAt: Date = Date()) {
+        self.path = path
+        self.addedAt = addedAt
+    }
+}
+
 /// Knobs for one extraction run, persisted with the result so `vox vocab
 /// refresh` reproduces the same list against fresh text.
 public struct CorpusExtractionOptions: Codable, Sendable, Equatable {
@@ -68,9 +81,13 @@ public struct CorpusVocabulary: Codable, Sendable, Equatable {
     public static let weight = 0.5
 
     public var schemaVersion: Int
+    /// When the corpus was last (re-)scanned as a whole. Scoring is a
+    /// whole-corpus statistic, so adding or removing one source re-scans
+    /// everything and moves this for all of them together.
     public var generatedAt: Date
-    /// Absolute paths passed to `vox vocab seed`, replayed by `refresh`.
-    public var sources: [String]
+    /// Folders/files tracked, each with its own `addedAt`. Replayed by
+    /// `refresh`; edited incrementally by `vox vocab sources add/remove`.
+    public var sources: [CorpusSource]
     public var options: CorpusExtractionOptions
     public var filesScanned: Int
     public var tokensScanned: Int
@@ -83,7 +100,7 @@ public struct CorpusVocabulary: Codable, Sendable, Equatable {
     public init(
         schemaVersion: Int = CorpusVocabulary.currentSchemaVersion,
         generatedAt: Date = Date(),
-        sources: [String],
+        sources: [CorpusSource],
         options: CorpusExtractionOptions = .default,
         filesScanned: Int = 0,
         tokensScanned: Int = 0,
@@ -106,7 +123,17 @@ public struct CorpusVocabulary: Codable, Sendable, Equatable {
             try container.decodeIfPresent(Int.self, forKey: .schemaVersion)
             ?? CorpusVocabulary.currentSchemaVersion
         generatedAt = try container.decodeIfPresent(Date.self, forKey: .generatedAt) ?? Date()
-        sources = try container.decodeIfPresent([String].self, forKey: .sources) ?? []
+        if let typed = try? container.decodeIfPresent([CorpusSource].self, forKey: .sources) {
+            // Current shape: path + its own addedAt.
+            sources = typed
+        } else if let legacy = try container.decodeIfPresent([String].self, forKey: .sources) {
+            // Pre-per-folder shape: bare paths. Backfill addedAt with the
+            // corpus's generation time since we have no better answer.
+            let backfilledAddedAt = generatedAt
+            sources = legacy.map { CorpusSource(path: $0, addedAt: backfilledAddedAt) }
+        } else {
+            sources = []
+        }
         options = try container.decodeIfPresent(CorpusExtractionOptions.self, forKey: .options) ?? .default
         filesScanned = try container.decodeIfPresent(Int.self, forKey: .filesScanned) ?? 0
         tokensScanned = try container.decodeIfPresent(Int.self, forKey: .tokensScanned) ?? 0
@@ -260,6 +287,82 @@ public final class CorpusVocabularyStore {
                 try remove()
             }
             return vocabulary
+        }
+    }
+
+    /// Re-scans every file under `sources` and overwrites the stored corpus
+    /// with fresh terms and stats. Scoring is a whole-corpus statistic, so
+    /// this is the only place extraction happens: `seed`, `refresh`,
+    /// `addSources`, and `removeSources` all funnel through it.
+    @discardableResult
+    public func sync(
+        sources: [CorpusSource],
+        options: CorpusExtractionOptions,
+        excluded: [String]
+    ) throws -> CorpusVocabulary {
+        try FileLock.withLock(at: paths.corpusVocabularyLockFile) {
+            let files = try CorpusVocabularyExtractor.textFiles(
+                under: sources.map { URL(fileURLWithPath: $0.path) }
+            )
+            guard !files.isEmpty else {
+                throw VoxError.config(
+                    "No .md or .txt files found under: \(sources.map(\.path).joined(separator: ", "))"
+                )
+            }
+            let result = try CorpusVocabularyExtractor(options: options).extract(files: files)
+            let vocabulary = CorpusVocabulary(
+                sources: sources,
+                options: options,
+                filesScanned: result.filesScanned,
+                tokensScanned: result.tokensScanned,
+                terms: result.terms,
+                excluded: excluded
+            )
+            try save(vocabulary)
+            return vocabulary
+        }
+    }
+
+    /// Adds `newPaths` to whatever is already tracked (existing sources keep
+    /// their original `addedAt`) and re-syncs the whole corpus.
+    @discardableResult
+    public func addSources(
+        _ newPaths: [String],
+        options: CorpusExtractionOptions? = nil
+    ) throws -> CorpusVocabulary {
+        try FileLock.withLock(at: paths.corpusVocabularyLockFile) {
+            let previous = try load()
+            let standardized = newPaths.map {
+                (($0 as NSString).expandingTildeInPath as NSString).standardizingPath
+            }
+            var sources = previous?.sources ?? []
+            let existingPaths = Set(sources.map(\.path))
+            for path in standardized where !existingPaths.contains(path) {
+                sources.append(CorpusSource(path: path))
+            }
+            return try sync(
+                sources: sources,
+                options: options ?? previous?.options ?? .default,
+                excluded: previous?.excluded ?? []
+            )
+        }
+    }
+
+    /// Stops tracking `pathsToRemove` and re-syncs the remainder. Returns
+    /// `nil` (and clears corpus.json) when nothing is left tracked.
+    @discardableResult
+    public func removeSources(_ pathsToRemove: [String]) throws -> CorpusVocabulary? {
+        try FileLock.withLock(at: paths.corpusVocabularyLockFile) {
+            guard let previous = try load() else { return nil }
+            let standardized = Set(
+                pathsToRemove.map { (($0 as NSString).expandingTildeInPath as NSString).standardizingPath }
+            )
+            let remaining = previous.sources.filter { !standardized.contains($0.path) }
+            guard !remaining.isEmpty else {
+                try remove()
+                return nil
+            }
+            return try sync(sources: remaining, options: previous.options, excluded: previous.excluded)
         }
     }
 }
