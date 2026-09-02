@@ -33,7 +33,14 @@ public struct ModeRunner: Sendable {
         self.clientFactory = clientFactory
     }
 
-    public func run(transcript: String, mode: ModeDefinition) async throws -> ModeResult {
+    /// `vocabulary` (user terms plus corpus-seeded ones, see
+    /// `VocabularyEntry.merge`) is appended to an LLM mode's system prompt as
+    /// spelling guidance; raw and cleanup modes ignore it.
+    public func run(
+        transcript: String,
+        mode: ModeDefinition,
+        vocabulary: [String] = []
+    ) async throws -> ModeResult {
         try mode.validate()
         let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -58,7 +65,7 @@ public struct ModeRunner: Sendable {
             // built-in prompts below are written to match.
             let request = ChatCompletionRequest(
                 model: effective.model,
-                systemPrompt: mode.prompt ?? "",
+                systemPrompt: Self.systemPrompt(mode.prompt ?? "", vocabulary: vocabulary),
                 userText: "<transcript>\(trimmed)</transcript>",
                 temperature: effective.temperature,
                 maxOutputTokens: effective.maxOutputTokens
@@ -72,5 +79,18 @@ public struct ModeRunner: Sendable {
                 llmModel: effective.model
             )
         }
+    }
+
+    /// The system prompt with the vocabulary glossary appended. Kept as an
+    /// addendum rather than woven into the mode's own prompt so a custom mode
+    /// gets the same guidance without editing it.
+    public static func systemPrompt(_ prompt: String, vocabulary: [String]) -> String {
+        let terms = VocabInjector.normalize(vocabulary)
+        guard !terms.isEmpty else { return prompt }
+        let glossary = """
+            The speaker often uses these names and terms; when a word in the transcript is a \
+            misheard or misspelled version of one, use this spelling: \(terms.joined(separator: ", ")).
+            """
+        return prompt.isEmpty ? glossary : prompt + "\n\n" + glossary
     }
 }

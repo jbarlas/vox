@@ -40,6 +40,9 @@ public final class DictationPipeline {
     private let modeRunner: ModeRunner
     private let modelManager: ModelManager
     private let capture: AudioCapture
+    /// User terms plus corpus-seeded ones, loaded once here from the cached
+    /// `corpus.json` — a small JSON read, never an extraction.
+    private let vocabulary: [VocabularyEntry]
     /// Set by a stop that arrives before the microphone is open — a
     /// press-and-hold release during model loading, typically.
     private let stopRequested = Flag()
@@ -57,6 +60,10 @@ public final class DictationPipeline {
         self.modeRunner = modeRunner ?? ModeRunner(llmConfig: config.llm)
         self.modelManager = modelManager ?? ModelManager(paths: paths)
         self.capture = AudioCapture(config: config.recording)
+        self.vocabulary = VocabularyEntry.merge(
+            user: config.vocabulary,
+            corpus: CorpusVocabularyStore(paths: paths).loadForInference()
+        )
     }
 
     /// Stops an in-flight recording; the pipeline then continues to transcribe
@@ -128,7 +135,7 @@ public final class DictationPipeline {
                 audio: audio,
                 modelPath: modelPath,
                 language: config.language,
-                initialPrompt: VocabInjector.initialPrompt(vocabulary: config.vocabulary)
+                initialPrompt: VocabInjector.initialPrompt(entries: vocabulary)
             )
         )
         timings.transcribeMs = Self.elapsedMs(since: transcribeClock)
@@ -142,7 +149,11 @@ public final class DictationPipeline {
         let modeResult: ModeResult
         let modeError: VoxError?
         do {
-            modeResult = try await modeRunner.run(transcript: transcription.text, mode: mode)
+            modeResult = try await modeRunner.run(
+                transcript: transcription.text,
+                mode: mode,
+                vocabulary: vocabulary.map(\.term)
+            )
             modeError = nil
         } catch {
             modeResult = ModeResult(text: transcription.text, mode: mode.name, kind: mode.kind)
