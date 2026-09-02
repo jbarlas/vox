@@ -219,6 +219,49 @@ vox modes test bullets "so we should probably ship the fix today and tell suppor
 vox record --mode bullets
 ```
 
+### Setting up LiteLLM
+
+The shipped default (`llm.provider` `litellm`, `llm.base_url`
+`http://127.0.0.1:4000/v1`) assumes a LiteLLM proxy on this machine in front of
+a local model. Nothing in `make setup` starts one; this is the path from
+nothing installed to a working LLM mode. To skip the proxy and talk to Ollama
+directly, or to use a hosted API, see [Providers](#providers) instead.
+
+Install LiteLLM and [Ollama](https://ollama.com), pull a model, and write a
+`config.yaml` that routes a model name to it:
+
+```bash
+pip install 'litellm[proxy]'
+ollama pull phi4-mini
+```
+
+```yaml
+model_list:
+  - model_name: vox
+    litellm_params:
+      model: ollama/phi4-mini
+      api_base: http://localhost:11434
+```
+
+Run the proxy on the port Vox expects, and point `llm.model` at the name you
+declared:
+
+```bash
+litellm --config config.yaml --port 4000
+vox config set llm.model vox
+vox modes test prompt "um so can you uh write this up as a request for the api team"
+```
+
+Pick a small, fast, **non-reasoning** instruction model. LLM modes are short
+edits of a transcript, not open-ended chat, so a 3–4B instruct model such as
+[`phi4-mini`](https://ollama.com/library/phi4-mini) is quick enough that the
+mode step stops being noticeable. Reasoning/"thinking" models (DeepSeek-R1
+distills, `gemma` thinking variants, Qwen3 in thinking mode, and the like) are
+a bad fit: they spend the whole output-token budget on chain-of-thought and
+never emit an answer, which surfaces in Vox as
+`LLM response contained no message content`. If you see that error, switch
+models rather than raising `llm.max_output_tokens`.
+
 ### Providers
 
 A provider is a preset for the endpoint and key-variable pair, so a hosted API
