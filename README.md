@@ -9,7 +9,7 @@ hotkey, plus a CLI over the same core, built directly on
 [whisper.cpp](https://github.com/ggerganov/whisper.cpp).
 
 Audio never leaves the machine. Hold **⌃⌥Space** anywhere, talk, let go, and the
-transcript is on your clipboard — optionally cleaned up or rewritten first by a
+transcript is on your clipboard, optionally cleaned up or rewritten first by a
 local LLM.
 
 The CLI is the same pipeline without the GUI, for scripting and for agents that
@@ -21,7 +21,7 @@ want a transcript as JSON on stdout; it does not need the app to be running.
 - Xcode command line tools and `cmake` (`brew install cmake`)
 - Optional: `ffmpeg`, only for `vox transcribe` on formats AVFoundation cannot decode
 - Optional: an OpenAI-compatible `/v1/chat/completions` endpoint, only for LLM
-  modes — [LiteLLM](https://github.com/BerriAI/litellm) (the default) or
+  modes. [LiteLLM](https://github.com/BerriAI/litellm) (the default) or
   something like Ollama directly both work
 
 ## Setup
@@ -140,8 +140,8 @@ vox record --output json --timeout 30
 }
 ```
 
-Failures are reported the same way — `ok: false` with a stable `error.code` —
-and the exit code is nonzero:
+A failure is reported the same way: `ok: false`, a stable `error.code`, and a
+nonzero exit code.
 
 | Code | Exit | Meaning |
 | --- | --- | --- |
@@ -177,7 +177,7 @@ Notable keys: `model`, `default_mode`, `language`, `vocab`, `hotkey.*`,
 `recording.silence_threshold_db`, `output.destination`,
 `output.session_history_limit` (`null`/`off` keeps every entry forever),
 `feedback.*`, `llm.provider`, `llm.base_url`, `llm.model`, `llm.api_key_env_var`,
-`llm.max_output_tokens` (`null` by default — omits the cap entirely).
+`llm.max_output_tokens` (`null` by default, which omits the cap entirely).
 
 Vox never stores an API key: `llm.api_key_env_var` names the environment variable
 to read it from.
@@ -200,10 +200,10 @@ itself rather than being search-and-replaced afterwards.
 
 ### Modes
 
-- `raw` — the transcript, untouched
-- `cleanup` — local rule-based filler and stutter removal, no network
-- `prompt`, `email` — built-in LLM modes
-- your own — Settings → Modes (`+`), or `vox modes add <name> --prompt "..."`
+- `raw`: the transcript, untouched
+- `cleanup`: local rule-based filler and stutter removal, no network
+- `prompt`, `email`: built-in LLM modes
+- your own: Settings → Modes (`+`), or `vox modes add <name> --prompt "..."`
 
 A mode's prompt is the system message; the transcript arrives as the user
 message wrapped in `<transcript>…</transcript>`, which keeps a small model from
@@ -219,11 +219,63 @@ vox modes test bullets "so we should probably ship the fix today and tell suppor
 vox record --mode bullets
 ```
 
+### Local LLM setup
+
+A fully local setup needs two more things running alongside Vox: a local
+inference server and a router. Recommended: [LiteLLM](https://github.com/BerriAI/litellm)
+for the router, since it uses the same OpenAI-compatible protocol that most
+tools already support, and [Ollama](https://ollama.com) for the inference
+server, since it's lightweight to install and works with LiteLLM out of the
+box. This combination also makes it easy to add a cloud provider later; see
+Providers below. Any other OpenAI-compatible local server, such as
+llama.cpp's own server, vLLM, or LM Studio, works too.
+
+Recommended model: [`phi4-mini`](https://ollama.com/library/phi4-mini), which
+is small, fast, and not a reasoning model. A reasoning model spends its output
+budget on chain-of-thought before answering, which surfaces as `LLM response
+contained no message content`.
+
+```bash
+brew install ollama uv
+ollama pull phi4-mini:3.8b-q8_0
+uv tool install 'litellm[proxy]'
+```
+
+```yaml
+# litellm-config.yaml
+model_list:
+  - model_name: ollama/phi4-mini:3.8b-q8_0
+    litellm_params:
+      model: ollama/phi4-mini:3.8b-q8_0
+      api_base: http://localhost:11434
+```
+
+```bash
+litellm --config litellm-config.yaml --port 4000 --host 127.0.0.1   # matches Vox's default llm.base_url
+vox config set llm.model ollama/phi4-mini:3.8b-q8_0
+vox modes test prompt "so like we should probably fix the login bug today"
+```
+
+`--host 127.0.0.1` keeps the proxy off the network. Without it, LiteLLM binds
+every interface (`0.0.0.0`), so anyone else on the LAN could reach an
+unauthenticated proxy in front of your local model. Skipping LiteLLM and
+pointing Vox straight at Ollama's own OpenAI-compatible endpoint also works,
+at the cost of the routing LiteLLM would otherwise give you (see below).
+Ollama expects the model's bare name, not the `ollama/`-prefixed one LiteLLM
+routing uses:
+
+```bash
+vox config set llm.base_url http://127.0.0.1:11434/v1
+vox config set llm.model phi4-mini:3.8b-q8_0
+```
+
 ### Providers
 
-A provider is a preset for the endpoint and key-variable pair, so a hosted API
-is one choice rather than a URL to look up. `vox config providers` lists them
-with their key variables and whether each is set in the current environment.
+Everything above stays on the machine; going to a hosted API for one mode or
+all of them is a config change, not a different setup. A provider is a preset
+for the endpoint and key-variable pair, so a hosted API is one choice rather
+than a URL to look up. `vox config providers` lists them with their key
+variables and whether each is set in the current environment.
 
 ```bash
 vox config providers
@@ -234,13 +286,13 @@ export OPENAI_API_KEY=…
 
 Anything not in that list works by setting `llm.base_url` and
 `llm.api_key_env_var` directly. Settings → LLM edits the same fields, and shows
-whether the key variable is visible to the app — the menu bar app inherits the
+whether the key variable is visible to the app. The menu bar app inherits the
 login environment, not your shell's, so a hosted key usually needs
 `launchctl setenv OPENAI_API_KEY …` (or a login item) rather than a line in
 `.zshrc`.
 
-A single mode can go somewhere else — a cheap local model for `cleanup`-style
-rewrites, a hosted one for `email`:
+A single mode can go somewhere else: a cheap local model for `cleanup`-style
+rewrites, a hosted one for `email`.
 
 ```bash
 vox modes add email-pro --prompt "..." --provider openai --model gpt-4o
@@ -253,7 +305,7 @@ which were chosen for the global endpoint: give the mode its own
 
 ### Session history
 
-Every dictation — successful or not — is logged to
+Every dictation, successful or not, is logged to
 `~/Library/Application Support/Vox/sessions.json`, newest first: start/finish
 time, mode, model, stop reason, per-stage timings, both the raw whisper.cpp
 transcript and the mode output, and on failure the error code/message. It
@@ -271,7 +323,7 @@ session data" (opens the file) and "Clear history now".
 ## Development
 
 ```bash
-make test    # swift test — the platform-independent core
+make test    # swift test: the platform-independent core
 make lint    # swift-format lint, if installed
 make clean   # or: make distclean, which also drops the whisper.cpp build
 ```
@@ -279,7 +331,7 @@ make clean   # or: make distclean, which also drops the whisper.cpp build
 `VoxKit` holds everything portable (config, modes, LLM client, JSON contract) and
 is what the test suite covers. `VoxCore` holds the macOS-only pipeline (audio
 capture, whisper.cpp bridge, output routing); `VoxCLI` and `VoxApp` are thin
-front-ends over it — neither wraps the other.
+front-ends over it, and neither wraps the other.
 
 Not implemented yet: voice commands and live streaming transcription. Deferred
 feature work is tracked as [`feature`-labeled
