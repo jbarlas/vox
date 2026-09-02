@@ -15,15 +15,17 @@ struct SettingsView: View {
                 .tabItem { Label("Vocabulary", systemImage: "text.book.closed") }
             ModesSettings(state: state)
                 .tabItem { Label("Modes", systemImage: "wand.and.stars") }
-            LLMSettings(state: state)
-                .tabItem { Label("LLM", systemImage: "cloud") }
             OutputSettings(state: state)
                 .tabItem { Label("Output", systemImage: "doc.on.clipboard") }
-            FeedbackSettings(state: state)
-                .tabItem { Label("Feedback", systemImage: "speaker.wave.2") }
         }
         .padding(16)
-        .frame(minWidth: 600, minHeight: 440)
+        // Was 7 tabs at one point (LLM, Feedback, and Corrections each had
+        // their own): past a certain width-per-tab, macOS's TabView silently
+        // collapses overflow tabs into a ">>" popup menu instead of showing
+        // them all. Folded LLM into Modes (it's an item in the same list,
+        // not a separate pane) and Feedback/Corrections into General/Output
+        // instead of just widening the window around 7 tabs.
+        .frame(minWidth: 620, minHeight: 460)
     }
 }
 
@@ -62,7 +64,12 @@ private struct GeneralSettings: View {
             Section("Hotkey") {
                 Toggle("Enable global hotkey", isOn: binding(\.hotkey.enabled))
                 LabeledContent("Shortcut") {
-                    HotkeyRecorderButton(state: state)
+                    HotkeyRecorderButton(hotkey: state.config.hotkey) { keyCode, modifiers in
+                        state.save {
+                            $0.hotkey.keyCode = keyCode
+                            $0.hotkey.modifiers = modifiers
+                        }
+                    }
                 }
                 Picker("Activation", selection: activationBinding) {
                     Text("Press and hold").tag(HotkeyConfig.Activation.pressAndHold)
@@ -107,12 +114,63 @@ private struct GeneralSettings: View {
                 }
             }
 
+            Section("Sounds") {
+                Toggle("Play sounds", isOn: binding(\.feedback.soundsEnabled))
+                Group {
+                    soundPicker("Recording starts", keyPath: \.feedback.startSound)
+                    soundPicker("Recording stops", keyPath: \.feedback.stopSound)
+                    soundPicker("Dictation is ready", keyPath: \.feedback.doneSound)
+                    soundPicker("Something fails", keyPath: \.feedback.errorSound)
+                }
+                .disabled(!state.config.feedback.soundsEnabled)
+            }
+
+            Section("On screen") {
+                Toggle(
+                    "Show waveform at the top of the screen", isOn: binding(\.feedback.showOverlay))
+                Text(
+                    "A click-through strip under the menu bar showing the microphone input while recording."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
             Section {
                 Toggle("Launch at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { enabled in setLaunchAtLogin(enabled) }
             }
         }
         .formStyle(.grouped)
+    }
+
+    private func soundPicker(
+        _ label: String,
+        keyPath: WritableKeyPath<VoxConfig, String?>
+    ) -> some View {
+        HStack {
+            Picker(label, selection: soundBinding(keyPath)) {
+                Text("None").tag("")
+                ForEach(FeedbackConfig.systemSoundNames, id: \.self) { name in
+                    Text(name).tag(name)
+                }
+            }
+            Button {
+                if let name = state.config[keyPath: keyPath] { NSSound(named: name)?.play() }
+            } label: {
+                Image(systemName: "play.circle")
+            }
+            .buttonStyle(.borderless)
+            .disabled(state.config[keyPath: keyPath] == nil)
+        }
+    }
+
+    private func soundBinding(_ keyPath: WritableKeyPath<VoxConfig, String?>) -> Binding<String> {
+        Binding(
+            get: { state.config[keyPath: keyPath] ?? "" },
+            set: { newValue in
+                state.save { $0[keyPath: keyPath] = newValue.isEmpty ? nil : newValue }
+            }
+        )
     }
 
     private var modelInstalled: Bool {
@@ -194,10 +252,12 @@ private struct GeneralSettings: View {
 }
 
 /// Captures the next key chord pressed while "Record new shortcut…" is
-/// active and writes it straight to `hotkey.key_code`/`hotkey.modifiers`, in
-/// place of editing them by hand with `vox config set`.
+/// active and hands it to `save`, in place of editing `key_code`/`modifiers`
+/// by hand with `vox config set`. `save` returns the message of a rejected
+/// chord (one that collides with the other hotkey, say) to show inline.
 private struct HotkeyRecorderButton: View {
-    @ObservedObject var state: AppState
+    let hotkey: HotkeyConfig
+    let save: (UInt16, [String]) -> String?
     @State private var isRecording = false
     @State private var monitor: Any?
     @State private var warning: String?
@@ -208,7 +268,7 @@ private struct HotkeyRecorderButton: View {
                 Text(
                     isRecording
                         ? "Press the new shortcut… (Esc to cancel)"
-                        : HotkeyManager.displayString(state.config.hotkey)
+                        : HotkeyManager.displayString(hotkey)
                 )
                 .foregroundStyle(isRecording ? .secondary : .primary)
                 Button(isRecording ? "Cancel" : "Record new shortcut…") {
@@ -255,80 +315,8 @@ private struct HotkeyRecorderButton: View {
             warning = "Include at least one modifier key (⌃⌥⇧⌘)."
             return
         }
-        state.save {
-            $0.hotkey.keyCode = event.keyCode
-            $0.hotkey.modifiers = modifiers
-        }
+        warning = save(event.keyCode, modifiers)
         stopRecording()
-    }
-}
-
-private struct FeedbackSettings: View {
-    @ObservedObject var state: AppState
-
-    var body: some View {
-        Form {
-            Section("Sounds") {
-                Toggle("Play sounds", isOn: binding(\.feedback.soundsEnabled))
-                Group {
-                    soundPicker("Recording starts", keyPath: \.feedback.startSound)
-                    soundPicker("Recording stops", keyPath: \.feedback.stopSound)
-                    soundPicker("Dictation is ready", keyPath: \.feedback.doneSound)
-                    soundPicker("Something fails", keyPath: \.feedback.errorSound)
-                }
-                .disabled(!state.config.feedback.soundsEnabled)
-            }
-
-            Section("On screen") {
-                Toggle(
-                    "Show waveform at the top of the screen", isOn: binding(\.feedback.showOverlay))
-                Text(
-                    "A click-through strip under the menu bar showing the microphone input while recording."
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
-    }
-
-    private func soundPicker(
-        _ label: String,
-        keyPath: WritableKeyPath<VoxConfig, String?>
-    ) -> some View {
-        HStack {
-            Picker(label, selection: soundBinding(keyPath)) {
-                Text("None").tag("")
-                ForEach(FeedbackConfig.systemSoundNames, id: \.self) { name in
-                    Text(name).tag(name)
-                }
-            }
-            Button {
-                if let name = state.config[keyPath: keyPath] { NSSound(named: name)?.play() }
-            } label: {
-                Image(systemName: "play.circle")
-            }
-            .buttonStyle(.borderless)
-            .disabled(state.config[keyPath: keyPath] == nil)
-        }
-    }
-
-    private func soundBinding(_ keyPath: WritableKeyPath<VoxConfig, String?>) -> Binding<String> {
-        Binding(
-            get: { state.config[keyPath: keyPath] ?? "" },
-            set: { newValue in
-                state.save { $0[keyPath: keyPath] = newValue.isEmpty ? nil : newValue }
-            }
-        )
-    }
-
-    private func binding<Value>(_ keyPath: WritableKeyPath<VoxConfig, Value>) -> Binding<Value> {
-        Binding(
-            get: { state.config[keyPath: keyPath] },
-            set: { newValue in
-                state.save { $0[keyPath: keyPath] = newValue }
-            }
-        )
     }
 }
 
@@ -371,12 +359,20 @@ private struct ModesSettings: View {
     @ObservedObject var state: AppState
     // Starts on the active default mode rather than nil, so the detail pane
     // shows real content immediately instead of just "Select a mode."
-    @State private var selection: String?
+    @State private var selection: Selection?
     @State private var error: String?
+
+    /// The list holds both modes and the one global-endpoint row, so
+    /// selection needs a tag type that covers both — a bare mode name can't
+    /// also stand for "the LLM Endpoint row is selected".
+    private enum Selection: Hashable {
+        case mode(String)
+        case llmEndpoint
+    }
 
     init(state: AppState) {
         self.state = state
-        _selection = State(initialValue: state.config.defaultMode)
+        _selection = State(initialValue: .mode(state.config.defaultMode))
     }
 
     /// Starting point for a mode created here, in place of the empty prompt
@@ -404,12 +400,20 @@ private struct ModesSettings: View {
         // window.
         HSplitView {
             VStack(spacing: 0) {
-                List(state.config.modes, id: \.name, selection: $selection) { mode in
-                    VStack(alignment: .leading) {
-                        Text(mode.name)
-                        Text(mode.kind.rawValue).font(.caption).foregroundStyle(.secondary)
+                List(selection: $selection) {
+                    Section("Modes") {
+                        ForEach(state.config.modes, id: \.name) { mode in
+                            VStack(alignment: .leading) {
+                                Text(mode.name)
+                                Text(mode.kind.rawValue).font(.caption).foregroundStyle(.secondary)
+                            }
+                            .tag(Selection.mode(mode.name))
+                        }
                     }
-                    .tag(mode.name)
+                    Section {
+                        Label("LLM Endpoint", systemImage: "cloud")
+                            .tag(Selection.llmEndpoint)
+                    }
                 }
                 .frame(maxHeight: .infinity)
                 HStack(spacing: 2) {
@@ -417,7 +421,7 @@ private struct ModesSettings: View {
                         .help("New LLM mode")
                     Button { removeSelectedMode() } label: { Image(systemName: "minus") }
                         .help("Delete the selected mode")
-                        .disabled(selection == nil)
+                        .disabled(selectedModeName == nil)
                     Spacer()
                 }
                 .buttonStyle(.borderless)
@@ -426,11 +430,17 @@ private struct ModesSettings: View {
             .frame(minWidth: 160, maxHeight: .infinity)
 
             VStack(alignment: .leading, spacing: 0) {
-                if let mode = state.config.modes.first(where: { $0.name == selection }) {
-                    ModeDetail(state: state, mode: mode, selection: $selection, error: $error)
-                } else {
-                    Text("Select a mode.").foregroundStyle(.secondary).frame(
-                        maxWidth: .infinity, maxHeight: .infinity)
+                switch selection {
+                case .mode(let name):
+                    if let mode = state.config.modes.first(where: { $0.name == name }) {
+                        ModeDetail(state: state, mode: mode, selection: modeSelectionBinding, error: $error)
+                    } else {
+                        placeholder
+                    }
+                case .llmEndpoint:
+                    LLMSettings(state: state)
+                case nil:
+                    placeholder
                 }
                 if let error {
                     Text(error).font(.caption).foregroundStyle(.orange).padding(12)
@@ -438,6 +448,26 @@ private struct ModesSettings: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+    }
+
+    private var placeholder: some View {
+        Text("Select a mode.").foregroundStyle(.secondary).frame(
+            maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var selectedModeName: String? {
+        if case .mode(let name) = selection { return name }
+        return nil
+    }
+
+    /// `ModeDetail` only ever points selection at a mode (following a
+    /// rename), never at the LLM Endpoint row, so this adapts its
+    /// `Binding<String?>` to the richer `Selection?` this view actually uses.
+    private var modeSelectionBinding: Binding<String?> {
+        Binding(
+            get: { selectedModeName },
+            set: { name in selection = name.map(Selection.mode) }
+        )
     }
 
     private func addMode() {
@@ -452,13 +482,13 @@ private struct ModesSettings: View {
                 )
             )
         }
-        if error == nil { selection = name }
+        if error == nil { selection = .mode(name) }
     }
 
     private func removeSelectedMode() {
-        guard let name = selection else { return }
+        guard let name = selectedModeName else { return }
         error = state.save { try $0.removeMode(named: name) }
-        if error == nil { selection = state.config.defaultMode }
+        if error == nil { selection = .mode(state.config.defaultMode) }
     }
 }
 
@@ -651,8 +681,8 @@ private struct LLMSettings: View {
 
             Section("Per-mode overrides") {
                 Text(
-                    "A single mode can run somewhere else entirely — see Modes. Modes "
-                        + "without an override of their own use the endpoint above."
+                    "A single mode can run somewhere else entirely; pick it from the list on "
+                        + "the left. Modes without an override of their own use the endpoint above."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -729,6 +759,7 @@ private struct LLMSettings: View {
 
 private struct OutputSettings: View {
     @ObservedObject var state: AppState
+    @State private var error: String?
 
     var body: some View {
         Form {
@@ -773,8 +804,103 @@ private struct OutputSettings: View {
                         .disabled(state.history.isEmpty)
                 }
             }
+
+            Section("Fix last transcript") {
+                Toggle("Enable the fix-last hotkey", isOn: correctionsBinding(\.corrections.fixLast.enabled))
+                LabeledContent("Shortcut") {
+                    HotkeyRecorderButton(hotkey: state.config.corrections.fixLast.hotkey) { keyCode, modifiers in
+                        state.save {
+                            $0.corrections.fixLast.keyCode = keyCode
+                            $0.corrections.fixLast.modifiers = modifiers
+                        }
+                    }
+                }
+                .disabled(!state.config.corrections.fixLast.enabled)
+                Text(
+                    "Reopens the most recent transcript in an editable box. Return copies the corrected "
+                        + "text to the clipboard; Esc closes it."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            Section("Preview before paste") {
+                Toggle(
+                    "Show an editable preview before delivering",
+                    isOn: correctionsBinding(\.corrections.preview.enabled))
+                Group {
+                    LabeledContent("Auto-commit after") {
+                        Stepper(
+                            String(format: "%.1fs", state.config.corrections.preview.idleTimeoutSeconds),
+                            value: correctionsBinding(\.corrections.preview.idleTimeoutSeconds),
+                            in: 0.5...10,
+                            step: 0.25
+                        )
+                    }
+                    Picker("Show the preview", selection: correctionsBinding(\.corrections.preview.display)) {
+                        Text("For every dictation").tag(PreviewConfig.Display.always)
+                        Text("Only when whisper was unsure").tag(PreviewConfig.Display.lowConfidence)
+                    }
+                    if state.config.corrections.preview.display == .lowConfidence {
+                        LabeledContent("Unsure below") {
+                            Stepper(
+                                String(format: "%.2f", state.config.corrections.preview.confidenceThreshold),
+                                value: correctionsBinding(\.corrections.preview.confidenceThreshold),
+                                in: -3...0,
+                                step: 0.05
+                            )
+                        }
+                        Text(
+                            "Mean log-probability of the weakest segment. 0 is certain; whisper.cpp itself "
+                                + "retries a segment below -1.0."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                }
+                .disabled(!state.config.corrections.preview.enabled)
+                Text(
+                    "The transcript pauses in a box under the menu bar. Left alone it is delivered as usual "
+                        + "after the timeout; typing keeps it open until Return (deliver) or Esc (discard)."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            Section("Correction data") {
+                LabeledContent("Fix-last", value: correctionSummary(state.correctionTelemetry.fixLast))
+                LabeledContent("Preview", value: correctionSummary(state.correctionTelemetry.preview))
+                HStack {
+                    Text("\(state.correctionCount) correction pairs saved").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Show in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([state.correctionsDirectoryURL])
+                    }
+                }
+                Text("Everything stays on this Mac; nothing is sent anywhere.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let error {
+                Text(error).font(.caption).foregroundStyle(.orange)
+            }
         }
         .formStyle(.grouped)
+        .onAppear { state.refreshCorrectionStats() }
+    }
+
+    private func correctionSummary(_ counts: CorrectionTelemetry.VariantCounts) -> String {
+        "\(counts.invocations) shown, \(counts.corrections) corrected"
+    }
+
+    private func correctionsBinding<Value>(_ keyPath: WritableKeyPath<VoxConfig, Value>) -> Binding<Value> {
+        Binding(
+            get: { state.config[keyPath: keyPath] },
+            set: { newValue in
+                error = state.save { $0[keyPath: keyPath] = newValue }
+            }
+        )
     }
 
     private var destinationBinding: Binding<OutputConfig.Destination> {

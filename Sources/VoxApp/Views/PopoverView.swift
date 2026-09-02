@@ -39,8 +39,13 @@ struct PopoverView: View {
                         .lineLimit(4)
                         .textSelection(.enabled)
                         .font(.callout)
-                    Button("Copy again") { state.copyToClipboard(transcript) }
-                        .buttonStyle(.link)
+                    HStack {
+                        Button("Copy again") { state.copyToClipboard(transcript) }
+                        if state.config.corrections.fixLast.enabled {
+                            Button("Fix…") { state.fixLastPressed() }
+                        }
+                    }
+                    .buttonStyle(.link)
                 }
             }
 

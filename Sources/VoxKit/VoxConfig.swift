@@ -18,6 +18,7 @@ public struct VoxConfig: Codable, Sendable, Equatable {
     public var feedback: FeedbackConfig
     public var llm: LLMConfig
     public var modes: [ModeDefinition]
+    public var corrections: CorrectionConfig
 
     public init(
         schemaVersion: Int = VoxConfig.currentSchemaVersion,
@@ -30,7 +31,8 @@ public struct VoxConfig: Codable, Sendable, Equatable {
         output: OutputConfig = .default,
         feedback: FeedbackConfig = .default,
         llm: LLMConfig = .default,
-        modes: [ModeDefinition] = ModeDefinition.builtIns
+        modes: [ModeDefinition] = ModeDefinition.builtIns,
+        corrections: CorrectionConfig = .default
     ) {
         self.schemaVersion = schemaVersion
         self.model = model
@@ -43,6 +45,7 @@ public struct VoxConfig: Codable, Sendable, Equatable {
         self.feedback = feedback
         self.llm = llm
         self.modes = modes
+        self.corrections = corrections
     }
 
     /// Every section is optional on read so a config written by an older build
@@ -65,6 +68,7 @@ public struct VoxConfig: Codable, Sendable, Equatable {
         llm = try container.decodeIfPresent(LLMConfig.self, forKey: .llm) ?? .default
         modes = try container.decodeIfPresent([ModeDefinition].self, forKey: .modes)
             ?? ModeDefinition.builtIns
+        corrections = try container.decodeIfPresent(CorrectionConfig.self, forKey: .corrections) ?? .default
     }
 
     public func mode(named name: String) -> ModeDefinition? {
@@ -167,6 +171,13 @@ public struct VoxConfig: Codable, Sendable, Equatable {
         try feedback.validate()
         try hotkey.validate()
         try output.validate()
+        try corrections.validate()
+        if corrections.fixLast.collides(with: hotkey) {
+            throw VoxError.config(
+                "corrections.fix_last uses the same chord as the record hotkey",
+                detail: "Give one of them a different key or modifiers."
+            )
+        }
     }
 }
 

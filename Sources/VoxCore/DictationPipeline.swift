@@ -168,7 +168,8 @@ public final class DictationPipeline {
             startedAt: startedAt,
             finishedAt: finishedAt,
             timings: timings,
-            modeError: modeError
+            modeError: modeError,
+            confidence: transcription.confidence
         )
     }
 

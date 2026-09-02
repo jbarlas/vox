@@ -25,6 +25,8 @@ final class AppState: ObservableObject {
     /// Non-nil when the config file on disk could not be read, in which case
     /// `config` holds defaults that have deliberately not been written back.
     @Published private(set) var configLoadError: String?
+    @Published private(set) var correctionTelemetry = CorrectionTelemetry()
+    @Published private(set) var correctionCount = 0
 
     /// Called after a config save so the hotkey registration can follow.
     var onConfigChange: ((VoxConfig) -> Void)?
@@ -37,6 +39,12 @@ final class AppState: ObservableObject {
     private let engine = WhisperEngine()
     private let feedback: FeedbackPlayer
     private let overlay = RecordingOverlayController()
+    private let correctionPanel = CorrectionPanelController()
+    private let corrections: CorrectionStore
+    private let telemetry: CorrectionTelemetryStore
+    /// The dictation `lastTranscript` came from, kept whole so a fix-last edit
+    /// can be logged against the raw whisper output and the mode that ran.
+    private var lastResult: RecordResult?
     private var pipeline: DictationPipeline?
     private var currentTask: Task<Void, Never>?
 
@@ -56,6 +64,8 @@ final class AppState: ObservableObject {
         self.config = config
         self.configLoadError = loadError
         self.feedback = FeedbackPlayer(config: config.feedback)
+        self.corrections = CorrectionStore(paths: paths)
+        self.telemetry = CorrectionTelemetryStore(paths: paths)
         self.sessionHistory = SessionHistory(
             paths: paths,
             limit: config.output.sessionHistoryLimit
@@ -213,6 +223,55 @@ final class AppState: ObservableObject {
     }
 
     private func finish(with result: RecordResult) {
+        inputLevelDB = -160
+        overlay.hide()
+        let preview = config.corrections.preview
+        guard preview.shouldShow(confidence: result.confidence), !result.transcript.isEmpty else {
+            deliver(result)
+            return
+        }
+
+        // Variant B: hold the transcript in the box. Whisper is done, so the
+        // stop chime has played; the done chime waits for the actual delivery.
+        status = .idle
+        note(.invoked, for: .preview)
+        correctionPanel.present(
+            CorrectionPanelController.Request(
+                title: "Preview",
+                subtitle: result.mode,
+                text: result.transcript,
+                idleTimeoutSeconds: preview.idleTimeoutSeconds,
+                onCommit: { [weak self] commit in
+                    guard let self else { return }
+                    note(commit.telemetryEvent, for: .preview)
+                    if commit.changed, let record = CorrectionRecord(result: result, corrected: commit.text, variant: .preview) {
+                        try? corrections.append(record)
+                    }
+                    var delivered = result
+                    delivered.transcript = commit.text
+                    // The panel has just been ordered out; give the previous
+                    // app's window a moment to become key again so an
+                    // auto-paste lands in it rather than in thin air.
+                    Task { @MainActor [weak self] in
+                        try? await Task.sleep(nanoseconds: 80_000_000)
+                        self?.deliver(delivered)
+                    }
+                },
+                onDismiss: { [weak self] in
+                    guard let self else { return }
+                    note(.cancelled, for: .preview)
+                    // Nothing goes out, but the dictation still happened.
+                    if config.output.keepSessionHistory {
+                        try? sessionHistory.append(SessionEntry(result: result))
+                        refreshHistory()
+                    }
+                    status = .idle
+                }
+            )
+        )
+    }
+
+    private func deliver(_ result: RecordResult) {
         let router = OutputRouter(
             history: config.output.keepSessionHistory ? sessionHistory : nil
         )
@@ -226,6 +285,7 @@ final class AppState: ObservableObject {
             }
             _ = try router.deliver(result: result, destination: destination)
             lastTranscript = result.transcript
+            lastResult = result
             if let modeError = result.modeError {
                 // Whisper still succeeded and its output was already
                 // delivered above (as `result.transcript`, filled in from the
@@ -242,8 +302,59 @@ final class AppState: ObservableObject {
             status = .failed(voxMessage(for: error))
             feedback.playError()
         }
-        inputLevelDB = -160
-        overlay.hide()
+    }
+
+    // MARK: - Fix last (Variant A)
+
+    func fixLastPressed() {
+        guard config.corrections.fixLast.enabled, !status.isBusy, !correctionPanel.isPresenting else { return }
+        guard let result = lastResult, !result.transcript.isEmpty else {
+            note(.invokedEmpty, for: .fixLast)
+            correctionPanel.presentEmptyState(
+                title: "Fix last transcript",
+                message: "Nothing to fix yet — dictate something first."
+            )
+            return
+        }
+        note(.invoked, for: .fixLast)
+        correctionPanel.present(
+            CorrectionPanelController.Request(
+                title: "Fix last transcript",
+                subtitle: result.mode,
+                text: result.transcript,
+                idleTimeoutSeconds: nil,
+                onCommit: { [weak self] commit in
+                    guard let self else { return }
+                    note(commit.telemetryEvent, for: .fixLast)
+                    if commit.changed, let record = CorrectionRecord(result: result, corrected: commit.text, variant: .fixLast) {
+                        try? corrections.append(record)
+                    }
+                    // Always back to the clipboard, whatever the normal
+                    // destination: the user has moved on since the paste and
+                    // the caret is wherever it is now.
+                    copyToClipboard(commit.text)
+                    lastTranscript = commit.text
+                    var updated = result
+                    updated.transcript = commit.text
+                    lastResult = updated
+                    if isFailed { status = .idle }
+                },
+                onDismiss: { [weak self] in self?.note(.cancelled, for: .fixLast) }
+            )
+        )
+    }
+
+    private func note(_ event: CorrectionTelemetry.Event, for variant: CorrectionVariant) {
+        try? telemetry.record(event, for: variant)
+        correctionTelemetry = telemetry.load()
+        if event == .corrected { correctionCount = corrections.count() }
+    }
+
+    var correctionsDirectoryURL: URL { corrections.directory }
+
+    func refreshCorrectionStats() {
+        correctionTelemetry = telemetry.load()
+        correctionCount = corrections.count()
     }
 
     private func fail(with error: Error, startedAt: Date, mode: String) {
@@ -282,6 +393,7 @@ final class AppState: ObservableObject {
     func clearHistory() {
         try? sessionHistory.clear()
         lastTranscript = nil
+        lastResult = nil
         refreshHistory()
     }
 

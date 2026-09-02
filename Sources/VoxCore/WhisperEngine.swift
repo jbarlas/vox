@@ -152,7 +152,10 @@ public final class WhisperEngine: TranscriptionEngine {
             // whisper.cpp timestamps are in centiseconds.
             let start = Int(whisper_full_get_segment_t0(context, index)) * 10
             let end = Int(whisper_full_get_segment_t1(context, index)) * 10
-            segments.append(TranscriptSegment(text: text, startMs: start, endMs: end))
+            let (logprob, tokenCount) = segmentConfidence(from: context, segment: index)
+            segments.append(
+                TranscriptSegment(text: text, startMs: start, endMs: end, meanLogprob: logprob, tokenCount: tokenCount)
+            )
         }
 
         let language: String?
@@ -168,6 +171,24 @@ public final class WhisperEngine: TranscriptionEngine {
             segments: segments,
             language: language
         )
+    }
+
+    /// Mean log-probability over the segment's text tokens. Special tokens
+    /// (timestamps, end-of-text, language tags: ids at or above `eot`) are
+    /// skipped so a confidently placed timestamp cannot mask a badly heard
+    /// word.
+    private func segmentConfidence(from context: OpaquePointer, segment: Int32) -> (Double?, Int) {
+        let eot = whisper_token_eot(context)
+        var sum = 0.0
+        var count = 0
+        for token in 0..<whisper_full_n_tokens(context, segment) {
+            guard whisper_full_get_token_id(context, segment, token) < eot else { continue }
+            let probability = Double(whisper_full_get_token_p(context, segment, token))
+            sum += log(max(probability, Double.leastNormalMagnitude))
+            count += 1
+        }
+        guard count > 0 else { return (nil, 0) }
+        return (sum / Double(count), count)
     }
 }
 
