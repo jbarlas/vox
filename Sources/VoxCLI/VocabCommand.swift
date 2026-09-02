@@ -239,8 +239,10 @@ struct VocabCommand: ParsableCommand {
         var minCount: Int?
 
         @Option(
-            help: "Ignore terms less than 2^N times as common here as in general English "
-                + "(default \(CorpusExtractionOptions.default.minScore))."
+            help: ArgumentHelp(
+                "Ignore terms less than 2^N times as common here as in general English "
+                    + "(default \(CorpusExtractionOptions.default.minScore))."
+            )
         )
         var minScore: Double?
 
