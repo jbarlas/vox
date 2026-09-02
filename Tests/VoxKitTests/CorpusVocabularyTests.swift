@@ -225,6 +225,40 @@ final class CorpusVocabularyTests: XCTestCase {
         XCTAssertThrowsError(try CorpusVocabularyExtractor.textFiles(under: [root.appendingPathComponent("missing")]))
     }
 
+    func testSkipsVendoredDependenciesAndCMakeListsDespiteExtension() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vox-corpus-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let vendored = root.appendingPathComponent("vendor/whisper.cpp", isDirectory: true)
+        let build = root.appendingPathComponent("build", isDirectory: true)
+        try FileManager.default.createDirectory(at: vendored, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: build, withIntermediateDirectories: true)
+        try "Zorblatt Zorblatt".write(to: root.appendingPathComponent("note.md"), atomically: true, encoding: .utf8)
+        try "STREQUAL STREQUAL target_link_libraries".write(
+            to: vendored.appendingPathComponent("CMakeLists.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "STREQUAL STREQUAL vendored README".write(
+            to: vendored.appendingPathComponent("README.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "Also a build artifact".write(
+            to: build.appendingPathComponent("CMakeLists.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let files = try CorpusVocabularyExtractor.textFiles(under: [root])
+        XCTAssertEqual(files.map(\.lastPathComponent).sorted(), ["note.md"])
+
+        // Naming it directly is still respected: the skip only applies while
+        // discovering files under a directory, not to an explicit argument.
+        let direct = vendored.appendingPathComponent("CMakeLists.txt")
+        XCTAssertEqual(try CorpusVocabularyExtractor.textFiles(under: [direct]), [direct])
+    }
+
     func testModeRunnerAppendsGlossaryOnlyWhenVocabularyPresent() {
         XCTAssertEqual(ModeRunner.systemPrompt("Clean up.", vocabulary: []), "Clean up.")
         let withTerms = ModeRunner.systemPrompt("Clean up.", vocabulary: ["Vox", "vox", "LiteLLM"])
