@@ -23,6 +23,7 @@ struct Vox: AsyncParsableCommand {
             ConfigCommand.self,
             Models.self,
             Modes.self,
+            VocabCommand.self,
             Permissions.self,
         ],
         defaultSubcommand: Record.self

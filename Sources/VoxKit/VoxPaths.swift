@@ -34,11 +34,15 @@ public struct VoxPaths: Sendable {
     public var modelsDirectory: URL { supportDirectory.appendingPathComponent("models", isDirectory: true) }
     public var sessionsFile: URL { supportDirectory.appendingPathComponent("sessions.json") }
     public var logFile: URL { supportDirectory.appendingPathComponent("vox.log") }
+    public var vocabularyDirectory: URL { supportDirectory.appendingPathComponent("vocab", isDirectory: true) }
+    /// Output of `vox vocab seed`; see `CorpusVocabulary`.
+    public var corpusVocabularyFile: URL { vocabularyDirectory.appendingPathComponent("corpus.json") }
 
     /// Sidecar files `FileLock` locks, next to the documents they guard. They
     /// are never read or written — only `flock`ed — so they stay empty.
     public var configLockFile: URL { supportDirectory.appendingPathComponent("config.json.lock") }
     public var sessionsLockFile: URL { supportDirectory.appendingPathComponent("sessions.json.lock") }
+    public var corpusVocabularyLockFile: URL { vocabularyDirectory.appendingPathComponent("corpus.json.lock") }
 
     public func modelFile(for model: WhisperModel) -> URL {
         modelsDirectory.appendingPathComponent(model.fileName)

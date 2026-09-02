@@ -87,6 +87,7 @@ overlay and each sound are configurable in Settings → Feedback, or under
 | `vox transcribe <file>` | Transcribe an existing audio file |
 | `vox config get/set/list` | Read and edit the shared config |
 | `vox config vocab` | Manage custom vocabulary |
+| `vox vocab list/add/remove/seed/refresh/clear` | Custom vocabulary, hand-added or seeded from your notes |
 | `vox models list/download/set/remove` | Manage whisper models |
 | `vox modes list/add/remove/set-default/test` | Manage post-processing modes |
 | `vox permissions` | Check microphone and Accessibility access |
@@ -196,7 +197,55 @@ vox config vocab --show-prompt
 ```
 
 Terms are injected as whisper.cpp's initial prompt, so they bias the decode
-itself rather than being search-and-replaced afterwards.
+itself rather than being search-and-replaced afterwards. LLM modes get the same
+list appended to their system prompt as spelling guidance.
+
+#### Seeding vocabulary from your notes
+
+Generic Whisper models have never seen your project names, contacts, or
+jargon. Rather than learning from Vox's own (possibly wrong) transcripts,
+`vox vocab seed` mines text you already wrote correctly:
+
+```bash
+vox vocab seed ~/Obsidian ~/notes/glossary.txt   # recursive; .md and .txt only
+vox vocab list                                    # merged vocabulary with source + weight
+vox vocab remove Foobar                           # drop a term (stays excluded on refresh)
+vox vocab refresh                                 # re-scan the same paths after you write more
+vox vocab clear                                   # forget the seeded terms, keep hand-added ones
+```
+
+It is fully offline. Every token in the corpus is scored against a bundled
+general-English frequency table:
+
+```
+score(w) = log2( (count(w) / N) / p_ref(w) )
+```
+
+where `N` is the corpus token count and `p_ref(w)` is the word's share of the
+reference corpus (words the reference has never seen get a floor of half its
+rarest entry). Terms seen fewer than 2 times, shorter than 3 characters, or
+scoring under 2 bits (less than 4x as common as in general English) are
+dropped; the top 200 survive, in their most common casing. Tune with
+`--max-terms`, `--min-count`, `--min-score`. Fenced code blocks and URLs are
+skipped; hidden folders such as `.obsidian` and `.git` are not scanned.
+
+The reference table is the top 30,000 words of
+[hackerb9/gwordlist](https://github.com/hackerb9/gwordlist) (derived from
+Google Books Ngram counts, CC BY 3.0), compiled in as
+`Sources/VoxKit/ReferenceWordFrequencies.swift`; regenerate it with
+`scripts/generate-reference-frequencies.sh`.
+
+Results are cached at `~/Library/Application Support/Vox/vocab/corpus.json`
+(same directory rules as `config.json`) with the source paths, options, term
+scores/counts, and your exclusions. Dictation reads that small file once per
+pipeline — extraction never runs on the inference path. Seeded terms carry
+weight `0.5`, hand-added ones `1.0`: user terms lead the whisper prompt, are
+the last to be truncated from it, and win any case-insensitive collision.
+
+Extraction is linear in corpus size — about 30 MB of text per second in a
+release build (400 files / 8 MB / 870k tokens in 0.25 s on a Linux VM) — so a
+few-thousand-note Obsidian vault seeds in seconds. Debug builds are several
+times slower.
 
 ### Modes
 
