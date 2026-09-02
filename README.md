@@ -221,23 +221,23 @@ vox record --mode bullets
 
 ### Local LLM setup
 
-A fully local setup is two more things running alongside Vox: an inference
-server ([Ollama](https://ollama.com)) and a router in front of it
+A fully local setup is two more things running alongside Vox: a local
+inference server and a router in front of it
 ([LiteLLM](https://github.com/BerriAI/litellm)) that speaks the
-OpenAI-compatible protocol Vox expects.
+OpenAI-compatible protocol Vox expects. [Ollama](https://ollama.com) is used
+below since it's the simplest to install, but any local OpenAI-compatible
+server works the same way (llama.cpp's own server, vLLM, LM Studio) — LiteLLM
+and Vox only need the `/v1/chat/completions` endpoint.
 
-Recommended model, found by testing several during development:
-[`phi4-mini`](https://ollama.com/library/phi4-mini) — small (3.8B), fast, and
-critically *not* a reasoning model. A reasoning model spends its entire output
-budget on chain-of-thought before it ever answers, which surfaces as `LLM
-response contained no message content`; avoid `*-reasoning` variants and
-models with "thinking" mode on by default (Qwen3's hybrid models, DeepSeek-R1
-distills) for this workload.
+Recommended model: [`phi4-mini`](https://ollama.com/library/phi4-mini) —
+small, fast, and not a reasoning model. A reasoning model spends its output
+budget on chain-of-thought before answering, which surfaces as `LLM response
+contained no message content`.
 
 ```bash
-brew install ollama
+brew install ollama uv
 ollama pull phi4-mini:3.8b-q8_0
-pip install 'litellm[proxy]'
+uv tool install 'litellm[proxy]'
 ```
 
 ```yaml
@@ -250,16 +250,23 @@ model_list:
 ```
 
 ```bash
-litellm --config litellm-config.yaml --port 4000   # matches Vox's default llm.base_url
+litellm --config litellm-config.yaml --port 4000 --host 127.0.0.1   # matches Vox's default llm.base_url
 vox config set llm.model ollama/phi4-mini:3.8b-q8_0
 vox modes test prompt "so like we should probably fix the login bug today"
 ```
 
-Both Ollama and LiteLLM bind to loopback by default, so nothing here leaves
-the machine. Skipping LiteLLM and pointing Vox straight at Ollama's own
-OpenAI-compatible endpoint also works — `vox config set llm.base_url
-http://127.0.0.1:11434/v1` — at the cost of the routing LiteLLM would otherwise
-give you (see below).
+`--host 127.0.0.1` keeps the proxy off the network — LiteLLM binds every
+interface (`0.0.0.0`) without it, so anyone else on the LAN could reach an
+unauthenticated proxy in front of your local model. Skipping LiteLLM and
+pointing Vox straight at Ollama's own OpenAI-compatible endpoint also works,
+at the cost of the routing LiteLLM would otherwise give you (see below) —
+Ollama expects the model's bare name, not the `ollama/`-prefixed one LiteLLM
+routing uses:
+
+```bash
+vox config set llm.base_url http://127.0.0.1:11434/v1
+vox config set llm.model phi4-mini:3.8b-q8_0
+```
 
 ### Providers
 
