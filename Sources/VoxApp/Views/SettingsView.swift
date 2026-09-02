@@ -351,6 +351,9 @@ private struct VocabularySettings: View {
                 Spacer()
                 Button("Save") { save() }
             }
+
+            Divider()
+            CorpusVocabularySection()
         }
         .onAppear { text = state.config.vocabulary.joined(separator: "\n") }
     }
@@ -364,6 +367,150 @@ private struct VocabularySettings: View {
         let normalized = VocabInjector.normalize(text.split(separator: "\n").map(String.init))
         state.save { $0.vocabulary = normalized }
         text = state.config.vocabulary.joined(separator: "\n")
+    }
+}
+
+/// Everything here mirrors `vox vocab sources`/`seed`/`refresh`: the app
+/// calls the same `CorpusVocabularyStore` methods the CLI does, so either
+/// one can add/remove a folder and the other sees it next time it loads.
+/// `VoxPaths()` resolves the same $VOX_HOME/default location both use.
+private struct CorpusVocabularySection: View {
+    @State private var corpus: CorpusVocabulary?
+    @State private var isSyncing = false
+    @State private var error: String?
+
+    private let store = CorpusVocabularyStore()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Seeded from your notes").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                if isSyncing {
+                    ProgressView().controlSize(.small)
+                } else {
+                    if corpus?.sources.isEmpty == false {
+                        Button("Sync Now") { sync() }.font(.caption)
+                    }
+                    Button("Add Folder…") { addFolder() }.font(.caption)
+                }
+            }
+
+            if let corpus, !corpus.sources.isEmpty {
+                VStack(spacing: 0) {
+                    ForEach(corpus.sources, id: \.path) { source in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(source.path)
+                                    .font(.caption)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Text("Added \(source.addedAt.formatted(date: .abbreviated, time: .shortened))")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button {
+                                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: source.path)])
+                            } label: {
+                                Image(systemName: "folder")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Show in Finder")
+                            Button {
+                                removeSource(source.path)
+                            } label: {
+                                Image(systemName: "minus.circle")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Stop tracking this folder")
+                            .disabled(isSyncing)
+                        }
+                        .padding(.vertical, 2)
+                        Divider()
+                    }
+                }
+
+                Text(
+                    "\(corpus.activeTerms.count) terms from \(corpus.filesScanned) files, last synced "
+                        + corpus.generatedAt.formatted(date: .abbreviated, time: .shortened)
+                )
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+                if corpus.activeTerms.isEmpty {
+                    Text("No distinctive terms found in these folders yet.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    List(corpus.activeTerms, id: \.term) { term in
+                        HStack {
+                            Text(term.term)
+                            Spacer()
+                            Text(String(format: "%.1f", term.score))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(minHeight: 80, maxHeight: 140)
+                }
+            } else {
+                Text(
+                    "No folders tracked yet. Add one of your notes folders to bias whisper.cpp "
+                        + "and LLM modes toward its project names and jargon."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            if let error {
+                Text(error).font(.caption).foregroundStyle(.orange)
+            }
+        }
+        .onAppear { corpus = try? store.load() }
+    }
+
+    private func addFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Add"
+        guard panel.runModal() == .OK else { return }
+        let paths = panel.urls.map(\.path)
+        guard !paths.isEmpty else { return }
+        run { try store.addSources(paths) }
+    }
+
+    private func removeSource(_ path: String) {
+        run { try store.removeSources([path]) }
+    }
+
+    private func sync() {
+        guard let corpus else { return }
+        run { try store.sync(sources: corpus.sources, options: corpus.options, excluded: corpus.excluded) }
+    }
+
+    /// Extraction reads and tokenizes files on disk, so it runs detached from
+    /// the main actor; only the resulting state update hops back to it.
+    private func run(_ operation: @escaping () throws -> CorpusVocabulary?) {
+        error = nil
+        isSyncing = true
+        Task.detached {
+            do {
+                let result = try operation()
+                await MainActor.run {
+                    corpus = result
+                    isSyncing = false
+                }
+            } catch {
+                let message = (error as? VoxError)?.message ?? error.localizedDescription
+                await MainActor.run {
+                    self.error = message
+                    isSyncing = false
+                }
+            }
+        }
     }
 }
 

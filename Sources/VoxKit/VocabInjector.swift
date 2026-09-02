@@ -1,6 +1,7 @@
 import Foundation
 
-/// Turns the user's vocabulary list into whisper.cpp's `initial_prompt`.
+/// Turns the vocabulary list — user terms plus any corpus-seeded ones — into
+/// whisper.cpp's `initial_prompt`.
 ///
 /// This is true decoder biasing rather than post-hoc find/replace: the terms
 /// condition the decode itself, so "Kubernetes" is more likely to be *heard*
@@ -9,6 +10,12 @@ public enum VocabInjector {
     /// whisper.cpp truncates the prompt to the model's context window; keeping
     /// well under it avoids silently dropping terms and wasting decode budget.
     public static let maxPromptCharacters = 900
+
+    /// The prompt for `entries` as merged by `VocabularyEntry.merge`: user
+    /// terms lead, so they are what survives truncation.
+    public static func initialPrompt(entries: [VocabularyEntry], extra: String? = nil) -> String? {
+        initialPrompt(vocabulary: entries.map(\.term), extra: extra)
+    }
 
     public static func initialPrompt(vocabulary: [String], extra: String? = nil) -> String? {
         let terms = normalize(vocabulary)

@@ -78,3 +78,29 @@ coverage — verify changes there by actually running the CLI or the app.
   `RecordResult.modeError` set, rather than losing the already-successful
   transcription. Preserve this if you touch that code path — don't let a
   mode/LLM failure bubble up and discard a good transcript.
+
+- **Seeding from a folder only scans `.md`/`.txt` — anything wider needs
+  its own gate, not just a bigger extension set.** `CMakeLists.txt` matches
+  `.txt` and is pure build syntax; `CorpusVocabularyExtractor.textFiles`
+  skips it by name and skips `vendor`/`node_modules`/`build`/`dist`/`Pods`/
+  `DerivedData`/`target` directories outright so seeding a project root
+  doesn't pull a vendored dependency's docs in as "vocabulary." If code
+  files (`.swift`, `.py`, ...) are ever added to `supportedExtensions`,
+  they need a per-language keyword denylist first — `initial_prompt` biasing
+  can't tell "a variable name the user might dictate" from "a language
+  keyword that shows up in every file of that type" (`if`, `elif`, `STREQUAL`),
+  and the latter will otherwise dominate the term list purely on frequency.
+
+- **`initial_prompt` is a soft bias, not a hard constraint — it does not
+  reliably force a compound spelling.** A seeded term like "Lightswitch"
+  can still come back from whisper.cpp as "Light switch": the model's prior
+  for two extremely common English words is often stronger than the
+  prompt's nudge toward one uncommon compound. `VocabCorrector` (VoxKit)
+  patches this after the fact — for any vocabulary term that is a single
+  word splittable into two entries in the same reference frequency table
+  `CorpusVocabularyExtractor` scores against, it rejoins that split form
+  wherever it appears in the transcript. `DictationPipeline.run()` applies
+  it once, right after transcription, before either `rawTranscript` or a
+  mode sees the text. It only handles exactly-two-word splits of a single
+  run; three-plus-word compounds and single-word mishears (e.g. a genuinely
+  wrong word substituted for the seeded one) aren't addressed by it.
