@@ -42,6 +42,17 @@ final class VocabCorrectorTests: XCTestCase {
         )
     }
 
+    func testRejectsSplitsWhereEitherHalfIsAFunctionWord() {
+        // "cannot" splits cleanly into "can" + "not", both real words, but
+        // "can not" is an ordinary, frequently-spoken phrase in its own
+        // right — rejoining it would be a wrong, unintended correction.
+        XCTAssertEqual(VocabCorrector.compoundCandidates(in: ["cannot"]).map(\.term), [])
+        XCTAssertEqual(
+            VocabCorrector.apply(vocabulary: ["cannot"], to: "I can not do that today."),
+            "I can not do that today."
+        )
+    }
+
     func testDeduplicatesCaseInsensitiveCollisions() {
         XCTAssertEqual(
             VocabCorrector.compoundCandidates(in: ["Lightswitch", "lightswitch"]).map(\.term),
