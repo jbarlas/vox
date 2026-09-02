@@ -79,6 +79,14 @@ recording started, recording stopped, dictation finished, and failure. The
 overlay and each sound are configurable in Settings → Feedback, or under
 `feedback.*` via `vox config set`.
 
+Optionally (Settings → Feedback → Live preview, off by default), the strip also
+shows a dimmed, italic live preview: a fast model (`live_preview.model`,
+`base.en` by default) re-transcribes the last few seconds of audio every
+`live_preview.interval_seconds` while you talk. It is a rough progress
+indicator, not the transcript — it is discarded the moment recording stops and
+replaced by the single full pass with your main model, which is the only text
+that reaches modes, the clipboard, history, or the CLI. The CLI never previews.
+
 ## CLI
 
 | Command | Purpose |
@@ -333,6 +341,6 @@ is what the test suite covers. `VoxCore` holds the macOS-only pipeline (audio
 capture, whisper.cpp bridge, output routing); `VoxCLI` and `VoxApp` are thin
 front-ends over it, and neither wraps the other.
 
-Not implemented yet: voice commands and live streaming transcription. Deferred
+Not implemented yet: voice commands. Deferred
 feature work is tracked as [`feature`-labeled
 issues](https://github.com/jbarlas/vox/issues?q=is%3Aissue+is%3Aopen+label%3Afeature).

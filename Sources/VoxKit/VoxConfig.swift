@@ -17,6 +17,8 @@ public struct VoxConfig: Codable, Sendable, Equatable {
     public var output: OutputConfig
     public var feedback: FeedbackConfig
     public var llm: LLMConfig
+    /// Menu bar app only; the CLI never reads it.
+    public var livePreview: LivePreviewConfig
     public var modes: [ModeDefinition]
 
     public init(
@@ -30,6 +32,7 @@ public struct VoxConfig: Codable, Sendable, Equatable {
         output: OutputConfig = .default,
         feedback: FeedbackConfig = .default,
         llm: LLMConfig = .default,
+        livePreview: LivePreviewConfig = .default,
         modes: [ModeDefinition] = ModeDefinition.builtIns
     ) {
         self.schemaVersion = schemaVersion
@@ -42,6 +45,7 @@ public struct VoxConfig: Codable, Sendable, Equatable {
         self.output = output
         self.feedback = feedback
         self.llm = llm
+        self.livePreview = livePreview
         self.modes = modes
     }
 
@@ -63,6 +67,7 @@ public struct VoxConfig: Codable, Sendable, Equatable {
         output = try container.decodeIfPresent(OutputConfig.self, forKey: .output) ?? .default
         feedback = try container.decodeIfPresent(FeedbackConfig.self, forKey: .feedback) ?? .default
         llm = try container.decodeIfPresent(LLMConfig.self, forKey: .llm) ?? .default
+        livePreview = try container.decodeIfPresent(LivePreviewConfig.self, forKey: .livePreview) ?? .default
         modes = try container.decodeIfPresent([ModeDefinition].self, forKey: .modes)
             ?? ModeDefinition.builtIns
     }
@@ -167,6 +172,7 @@ public struct VoxConfig: Codable, Sendable, Equatable {
         try feedback.validate()
         try hotkey.validate()
         try output.validate()
+        try livePreview.validate()
     }
 }
 

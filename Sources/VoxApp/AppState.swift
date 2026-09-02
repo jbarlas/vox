@@ -20,6 +20,10 @@ final class AppState: ObservableObject {
     @Published private(set) var status: Status = .idle
     @Published private(set) var lastTranscript: String?
     @Published private(set) var inputLevelDB: Double = -160
+    /// Live preview while recording; nil whenever the preview is off or the
+    /// recording has ended. Display only — `lastTranscript` and the output
+    /// router only ever see the full-pass `RecordResult`.
+    @Published private(set) var previewText: String?
     @Published private(set) var history: [SessionEntry] = []
     @Published var config: VoxConfig
     /// Non-nil when the config file on disk could not be read, in which case
@@ -35,6 +39,9 @@ final class AppState: ObservableObject {
     /// Held across runs so the model stays resident on the GPU between
     /// dictations.
     private let engine = WhisperEngine()
+    /// Separate engine (own whisper context, own queue) so the preview model
+    /// never evicts the main one or queues behind the final pass.
+    private let previewEngine = WhisperEngine()
     private let feedback: FeedbackPlayer
     private let overlay = RecordingOverlayController()
     private var pipeline: DictationPipeline?
@@ -160,12 +167,14 @@ final class AppState: ObservableObject {
         guard !status.isBusy else { return }
         let startedAt = Date()
         let requestedMode = modeName ?? config.defaultMode
-        let pipeline = DictationPipeline(config: config, paths: paths, engine: engine)
+        let preview = makePreviewRunner()
+        let pipeline = DictationPipeline(config: config, paths: paths, engine: engine, preview: preview)
         self.pipeline = pipeline
         status = .recording
         inputLevelDB = -160
+        previewText = nil
         feedback.playStart()
-        if config.feedback.showOverlay { overlay.show() }
+        if config.feedback.showOverlay { overlay.show(withPreview: preview != nil) }
 
         currentTask = Task { [weak self] in
             guard let self else { return }
@@ -190,9 +199,34 @@ final class AppState: ObservableObject {
         pipeline?.stopRecording()
     }
 
+    private func makePreviewRunner() -> LivePreviewRunner? {
+        let settings = config.livePreview
+        // The overlay is the only place the preview is drawn; without it the
+        // extra inference would buy nothing.
+        guard settings.enabled, config.feedback.showOverlay, let model = settings.resolvedModel else {
+            return nil
+        }
+        return LivePreviewRunner(
+            config: settings,
+            model: model,
+            language: config.language,
+            initialPrompt: VocabInjector.initialPrompt(vocabulary: config.vocabulary),
+            engine: previewEngine,
+            onSnapshot: { snapshot in
+                Task { @MainActor [weak self] in self?.apply(preview: snapshot) }
+            }
+        )
+    }
+
     private func apply(level: Double) {
         inputLevelDB = level
         overlay.update(levelDB: level)
+    }
+
+    private func apply(preview snapshot: LivePreviewSnapshot) {
+        guard status == .recording else { return }
+        previewText = snapshot.isEmpty ? nil : snapshot.text
+        overlay.update(previewText: snapshot.text)
     }
 
     private func apply(stage: DictationPipeline.Stage) {
@@ -207,6 +241,7 @@ final class AppState: ObservableObject {
                 overlay.setProcessing(true)
             }
             status = .processing
+            previewText = nil
         case .finished:
             break
         }
@@ -243,11 +278,13 @@ final class AppState: ObservableObject {
             feedback.playError()
         }
         inputLevelDB = -160
+        previewText = nil
         overlay.hide()
     }
 
     private func fail(with error: Error, startedAt: Date, mode: String) {
         inputLevelDB = -160
+        previewText = nil
         overlay.hide()
         // A hotkey tapped and released before the microphone opened is not a
         // failure worth chiming about, or logging.
