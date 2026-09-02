@@ -17,6 +17,27 @@ public enum VocabCorrector {
     /// just a coincidental prefix/suffix ("id" + "ea" out of "idea").
     static let minHalfLength = 3
 
+    /// Neither half of a split may be one of these: "cannot" splits cleanly
+    /// into "can" + "not", both real words, but "can not" is itself an
+    /// ordinary, frequently-spoken phrase — rejoining it would be a wrong,
+    /// unintended correction, not a repaired mishear. Most other accidental
+    /// splits ("sources" -> "sour" + "ces") are harmless because that exact
+    /// spaced sequence never occurs in natural speech; a split on two
+    /// closed-class function words is the one case that reliably does.
+    static let commonFunctionWords: Set<String> = [
+        "a", "an", "the", "and", "or", "but", "nor", "so", "yet", "if", "then", "than",
+        "not", "no", "is", "are", "was", "were", "be", "been", "being",
+        "am", "do", "does", "did", "done", "have", "has", "had",
+        "can", "could", "will", "would", "shall", "should", "may", "might", "must",
+        "i", "you", "he", "she", "it", "we", "they", "me", "him", "her", "us", "them",
+        "my", "your", "his", "its", "our", "their", "this", "that", "these", "those",
+        "of", "in", "on", "at", "to", "from", "by", "with", "for", "as", "into", "onto",
+        "up", "down", "out", "off", "over", "under", "about", "above", "after", "before",
+        "all", "any", "both", "each", "few", "more", "most", "some", "such", "only",
+        "own", "same", "too", "very", "just", "also", "here", "there", "when", "where",
+        "why", "how", "once", "again",
+    ]
+
     public static func apply(vocabulary: [String], to text: String) -> String {
         let candidates = compoundCandidates(in: vocabulary)
         guard !candidates.isEmpty else { return text }
@@ -57,6 +78,7 @@ public enum VocabCorrector {
         for splitIndex in minHalfLength...(lowered.count - minHalfLength) {
             let first = String(lowered[0..<splitIndex])
             let second = String(lowered[splitIndex...])
+            guard !commonFunctionWords.contains(first), !commonFunctionWords.contains(second) else { continue }
             if ReferenceWordFrequencies.shares[first] != nil, ReferenceWordFrequencies.shares[second] != nil {
                 return (first, second)
             }
