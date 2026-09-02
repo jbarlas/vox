@@ -50,6 +50,18 @@ final class TextCleanupTests: XCTestCase {
         XCTAssertEqual(TextCleanup.clean("okay so, um, like, the build failed"), "The build failed")
     }
 
+    func testStripsCommaSeparatedRunMidSentence() {
+        XCTAssertEqual(TextCleanup.clean("it was, so, like, broken"), "It was broken")
+        XCTAssertEqual(TextCleanup.clean("it was, okay, so, like, you know, broken"), "It was broken")
+        XCTAssertEqual(TextCleanup.clean("it was, so, like broken"), "It was, so, like broken")
+    }
+
+    func testIgnoresQuotesWhenDetectingPauses() {
+        XCTAssertEqual(TextCleanup.clean("he said, \"like,\" maybe"), "He said maybe")
+        XCTAssertEqual(TextCleanup.clean("He said \"it broke.\" So, fix it"), "He said \"it broke.\" Fix it")
+        XCTAssertEqual(TextCleanup.clean("he said \"I like,\" then paused"), "He said \"I like,\" then paused")
+    }
+
     func testStripsTrailingFillerAtSentenceEnd() {
         XCTAssertEqual(TextCleanup.clean("we should fix it, you know."), "We should fix it.")
         XCTAssertEqual(TextCleanup.clean("we should fix it, like"), "We should fix it")

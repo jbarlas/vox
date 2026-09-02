@@ -21,6 +21,7 @@ public enum TextCleanup {
 
     private static let sentenceEnders = CharacterSet(charactersIn: ".!?;:")
     private static let wrappingPunctuation = CharacterSet(charactersIn: ",.!?;:-—…\"'")
+    private static let quotes = CharacterSet(charactersIn: "\"'")
 
     /// Phrases whisper.cpp emits for non-speech audio.
     static let noiseAnnotations: [String] = [
@@ -69,13 +70,15 @@ public enum TextCleanup {
                 index += 1
                 continue
             }
-            let lastToken = tokens[runEnd - 1]
-            let trailing = trailingPunctuation(of: lastToken)
+            // Quotes are ignored when deciding what sets the run off, so
+            // `"like,"` still counts as comma-wrapped and `broke." So,` as
+            // sentence-initial.
+            let trailing = structuralPunctuation(trailingPunctuation(of: tokens[runEnd - 1]))
             let followedByComma = trailing.hasPrefix(",")
             let endsSentence =
                 runEnd == tokens.count
                 || trailing.unicodeScalars.first.map(sentenceEnders.contains) == true
-            let previousTrailing = output.last.map(trailingPunctuation(of:)) ?? ""
+            let previousTrailing = structuralPunctuation(output.last.map(trailingPunctuation(of:)) ?? "")
             let precededByComma = previousTrailing.hasSuffix(",")
             let precededByBoundary =
                 output.isEmpty
@@ -84,7 +87,7 @@ public enum TextCleanup {
             if precededByComma, followedByComma || endsSentence {
                 let previous = output.removeLast()
                 let carried = followedByComma ? String(trailing.dropFirst()) : trailing
-                output.append(String(previous.dropLast()) + carried)
+                output.append(droppingTrailingComma(previous) + carried)
                 index = runEnd
             } else if precededByBoundary, followedByComma {
                 let carried = String(trailing.dropFirst())
@@ -101,16 +104,33 @@ public enum TextCleanup {
     }
 
     /// Longest run of contextual fillers starting at `start`, as the index one
-    /// past its last token, or nil if `tokens[start]` begins no filler. Only
-    /// the run's final token may carry trailing punctuation.
+    /// past its last token, or nil if `tokens[start]` begins no filler. Fillers
+    /// inside the run may be separated by commas ("so, like,"); any other
+    /// punctuation ends the run.
     private static func contextualFillerRun(in tokens: [String], startingAt start: Int) -> Int? {
         var end = start
         while end < tokens.count {
             guard let length = contextualFillerLength(in: tokens, at: end) else { break }
             end += length
-            if !trailingPunctuation(of: tokens[end - 1]).isEmpty { break }
+            let trailing = structuralPunctuation(trailingPunctuation(of: tokens[end - 1]))
+            if trailing.isEmpty { continue }
+            if trailing == ",", end < tokens.count, contextualFillerLength(in: tokens, at: end) != nil {
+                continue
+            }
+            break
         }
         return end > start ? end : nil
+    }
+
+    private static func droppingTrailingComma(_ token: String) -> String {
+        guard let comma = token.lastIndex(of: ",") else { return token }
+        var result = token
+        result.remove(at: comma)
+        return result
+    }
+
+    private static func structuralPunctuation(_ punctuation: String) -> String {
+        String(String.UnicodeScalarView(punctuation.unicodeScalars.filter { !quotes.contains($0) }))
     }
 
     private static func contextualFillerLength(in tokens: [String], at index: Int) -> Int? {
