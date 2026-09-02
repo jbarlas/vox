@@ -221,13 +221,16 @@ vox record --mode bullets
 
 ### Local LLM setup
 
-A fully local setup is two more things running alongside Vox: a local
-inference server and a router in front of it
-([LiteLLM](https://github.com/BerriAI/litellm)) that speaks the
-OpenAI-compatible protocol Vox expects. [Ollama](https://ollama.com) is used
-below since it's the simplest to install, but any local OpenAI-compatible
-server works the same way (llama.cpp's own server, vLLM, LM Studio) — LiteLLM
-and Vox only need the `/v1/chat/completions` endpoint.
+A fully local setup needs two more things running alongside Vox: a local
+inference server and a router in front of it. We recommend
+[LiteLLM](https://github.com/BerriAI/litellm) for the router — it speaks the
+same OpenAI-compatible protocol Vox does, which is close to ubiquitous at this
+point — paired with [Ollama](https://ollama.com) as the inference server:
+lightweight to install and just as compatible. That pairing is also why
+moving a mode to a cloud provider later is a config change (see Providers
+below), not a different setup. Any other local OpenAI-compatible server works
+the same way (llama.cpp's own server, vLLM, LM Studio) if you'd rather use
+one of those instead of Ollama.
 
 Recommended model: [`phi4-mini`](https://ollama.com/library/phi4-mini) —
 small, fast, and not a reasoning model. A reasoning model spends its output
