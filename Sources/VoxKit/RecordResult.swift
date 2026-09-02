@@ -53,6 +53,9 @@ public struct RecordResult: Codable, Sendable, Equatable {
     /// succeeded by that point, so a mode failure degrades the output rather
     /// than losing it. `nil` means the mode ran cleanly.
     public var modeError: VoxError?
+    /// whisper.cpp's per-token probabilities, summarized. `nil` when the engine
+    /// did not report any (older envelopes, or no tokens decoded).
+    public var confidence: TranscriptConfidence?
 
     public init(
         transcript: String,
@@ -68,7 +71,8 @@ public struct RecordResult: Codable, Sendable, Equatable {
         startedAt: Date,
         finishedAt: Date,
         timings: RecordTimings,
-        modeError: VoxError? = nil
+        modeError: VoxError? = nil,
+        confidence: TranscriptConfidence? = nil
     ) {
         self.transcript = transcript
         self.rawTranscript = rawTranscript
@@ -84,6 +88,7 @@ public struct RecordResult: Codable, Sendable, Equatable {
         self.finishedAt = finishedAt
         self.timings = timings
         self.modeError = modeError
+        self.confidence = confidence
     }
 }
 

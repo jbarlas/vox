@@ -34,6 +34,13 @@ public enum ConfigKeys {
         "llm.timeout_seconds",
         "llm.max_output_tokens",
         "llm.allow_insecure_http",
+        "corrections.fix_last.enabled",
+        "corrections.fix_last.key_code",
+        "corrections.fix_last.modifiers",
+        "corrections.preview.enabled",
+        "corrections.preview.idle_timeout_seconds",
+        "corrections.preview.display",
+        "corrections.preview.confidence_threshold",
     ]
 
     public static func get(_ key: String, from config: VoxConfig) throws -> String {
@@ -69,6 +76,16 @@ public enum ConfigKeys {
         case "llm.timeout_seconds": return String(config.llm.timeoutSeconds)
         case "llm.max_output_tokens": return config.llm.maxOutputTokens.map { String($0) } ?? "unset"
         case "llm.allow_insecure_http": return String(config.llm.allowInsecureHTTP ?? false)
+        case "corrections.fix_last.enabled": return String(config.corrections.fixLast.enabled)
+        case "corrections.fix_last.key_code": return String(config.corrections.fixLast.keyCode)
+        case "corrections.fix_last.modifiers":
+            return config.corrections.fixLast.modifiers.joined(separator: "+")
+        case "corrections.preview.enabled": return String(config.corrections.preview.enabled)
+        case "corrections.preview.idle_timeout_seconds":
+            return String(config.corrections.preview.idleTimeoutSeconds)
+        case "corrections.preview.display": return config.corrections.preview.display.rawValue
+        case "corrections.preview.confidence_threshold":
+            return String(config.corrections.preview.confidenceThreshold)
         default: throw unknownKey(key)
         }
     }
@@ -164,6 +181,26 @@ public enum ConfigKeys {
             config.llm.maxOutputTokens = isUnset(value) ? nil : try integer(value, key, in: 1...1_000_000)
         case "llm.allow_insecure_http":
             config.llm.allowInsecureHTTP = try bool(value, key)
+        case "corrections.fix_last.enabled":
+            config.corrections.fixLast.enabled = try bool(value, key)
+        case "corrections.fix_last.key_code":
+            config.corrections.fixLast.keyCode = UInt16(try integer(value, key, in: 0...127))
+        case "corrections.fix_last.modifiers":
+            config.corrections.fixLast.modifiers = try modifiers(value)
+        case "corrections.preview.enabled":
+            config.corrections.preview.enabled = try bool(value, key)
+        case "corrections.preview.idle_timeout_seconds":
+            config.corrections.preview.idleTimeoutSeconds = try number(value, key)
+        case "corrections.preview.display":
+            guard let display = PreviewConfig.Display(rawValue: value) else {
+                throw VoxError.config(
+                    "Invalid corrections.preview.display '\(value)'",
+                    detail: "Expected one of: \(PreviewConfig.Display.allCases.map(\.rawValue).joined(separator: ", "))"
+                )
+            }
+            config.corrections.preview.display = display
+        case "corrections.preview.confidence_threshold":
+            config.corrections.preview.confidenceThreshold = try number(value, key)
         default:
             throw unknownKey(key)
         }
