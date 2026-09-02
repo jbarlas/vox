@@ -4,26 +4,66 @@ import SwiftUI
 import VoxCore
 import VoxKit
 
+/// System-Settings-style layout: a fixed sidebar listing every section
+/// (grouped per `SettingsSection.Group`) and a detail pane for the selected
+/// one. Unlike a `TabView`, a sidebar list scrolls instead of silently folding
+/// overflow tabs into a "»" menu, so adding a section is just a new
+/// `SettingsSection` case plus a `detail` arm.
 struct SettingsView: View {
     @ObservedObject var state: AppState
+    // Persisted by identifier so the window reopens on the last section
+    // across launches; `resolve` tolerates a stale value.
+    @AppStorage("settings.section") private var storedSection = SettingsSection.initial.rawValue
+    // `.all` and never anything else: the sidebar is the only way to reach a
+    // section, so it must not be collapsible.
+    @State private var columnVisibility = NavigationSplitViewVisibility.all
 
     var body: some View {
-        TabView {
-            GeneralSettings(state: state)
-                .tabItem { Label("General", systemImage: "gearshape") }
-            VocabularySettings(state: state)
-                .tabItem { Label("Vocabulary", systemImage: "text.book.closed") }
-            ModesSettings(state: state)
-                .tabItem { Label("Modes", systemImage: "wand.and.stars") }
-            LLMSettings(state: state)
-                .tabItem { Label("LLM", systemImage: "cloud") }
-            OutputSettings(state: state)
-                .tabItem { Label("Output", systemImage: "doc.on.clipboard") }
-            FeedbackSettings(state: state)
-                .tabItem { Label("Feedback", systemImage: "speaker.wave.2") }
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            List(selection: selection) {
+                ForEach(SettingsSection.Group.allCases) { group in
+                    Section(group.title) {
+                        ForEach(group.sections) { section in
+                            Label(section.title, systemImage: section.systemImage)
+                                .tag(section)
+                        }
+                    }
+                }
+            }
+            .listStyle(.sidebar)
+            .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 240)
+        } detail: {
+            detail(for: selection.wrappedValue)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(16)
         }
-        .padding(16)
-        .frame(minWidth: 600, minHeight: 440)
+        .onChange(of: columnVisibility) { visibility in
+            if visibility != .all { columnVisibility = .all }
+        }
+        .frame(minWidth: 720, minHeight: 480)
+    }
+
+    /// `List(selection:)` wants an optional and clears it on some deselect
+    /// gestures; a section is always shown, so `nil` keeps the current one.
+    private var selection: Binding<SettingsSection?> {
+        Binding(
+            get: { SettingsSection.resolve(storedSection) },
+            set: { newValue in
+                if let newValue { storedSection = newValue.rawValue }
+            }
+        )
+    }
+
+    @ViewBuilder
+    private func detail(for section: SettingsSection?) -> some View {
+        switch section ?? .initial {
+        case .general: GeneralSettings(state: state)
+        case .vocabulary: VocabularySettings(state: state)
+        case .feedback: FeedbackSettings(state: state)
+        case .modes: ModesSettings(state: state)
+        case .llm: LLMSettings(state: state)
+        case .output: OutputSettings(state: state)
+        }
     }
 }
 
