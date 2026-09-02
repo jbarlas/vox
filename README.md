@@ -219,11 +219,55 @@ vox modes test bullets "so we should probably ship the fix today and tell suppor
 vox record --mode bullets
 ```
 
+### Local LLM setup
+
+A fully local setup is two more things running alongside Vox: an inference
+server ([Ollama](https://ollama.com)) and a router in front of it
+([LiteLLM](https://github.com/BerriAI/litellm)) that speaks the
+OpenAI-compatible protocol Vox expects.
+
+Recommended model, found by testing several during development:
+[`phi4-mini`](https://ollama.com/library/phi4-mini) — small (3.8B), fast, and
+critically *not* a reasoning model. A reasoning model spends its entire output
+budget on chain-of-thought before it ever answers, which surfaces as `LLM
+response contained no message content`; avoid `*-reasoning` variants and
+models with "thinking" mode on by default (Qwen3's hybrid models, DeepSeek-R1
+distills) for this workload.
+
+```bash
+brew install ollama
+ollama pull phi4-mini:3.8b-q8_0
+pip install 'litellm[proxy]'
+```
+
+```yaml
+# litellm-config.yaml
+model_list:
+  - model_name: ollama/phi4-mini:3.8b-q8_0
+    litellm_params:
+      model: ollama/phi4-mini:3.8b-q8_0
+      api_base: http://localhost:11434
+```
+
+```bash
+litellm --config litellm-config.yaml --port 4000   # matches Vox's default llm.base_url
+vox config set llm.model ollama/phi4-mini:3.8b-q8_0
+vox modes test prompt "so like we should probably fix the login bug today"
+```
+
+Both Ollama and LiteLLM bind to loopback by default, so nothing here leaves
+the machine. Skipping LiteLLM and pointing Vox straight at Ollama's own
+OpenAI-compatible endpoint also works — `vox config set llm.base_url
+http://127.0.0.1:11434/v1` — at the cost of the routing LiteLLM would otherwise
+give you (see below).
+
 ### Providers
 
-A provider is a preset for the endpoint and key-variable pair, so a hosted API
-is one choice rather than a URL to look up. `vox config providers` lists them
-with their key variables and whether each is set in the current environment.
+Everything above stays on the machine; going to a hosted API for one mode or
+all of them is a config change, not a different setup. A provider is a preset
+for the endpoint and key-variable pair, so a hosted API is one choice rather
+than a URL to look up. `vox config providers` lists them with their key
+variables and whether each is set in the current environment.
 
 ```bash
 vox config providers
