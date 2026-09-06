@@ -27,6 +27,18 @@ final class ModeRunnerTests: XCTestCase {
         XCTAssertNil(client.lastRequest, "raw mode must never call the LLM")
     }
 
+    func testRawAndCleanupModesRejoinSplitVocabTermsSinceNoLLMWillSeeTheText() async throws {
+        let client = RecordingClient()
+        let raw = try await runner(client: client)
+            .run(transcript: "flip the light switch", mode: .raw, vocabulary: ["Lightswitch"])
+        XCTAssertEqual(raw.text, "flip the Lightswitch")
+
+        let cleaned = try await runner(client: client)
+            .run(transcript: "um flip the light switch", mode: .cleanup, vocabulary: ["Lightswitch"])
+        XCTAssertEqual(cleaned.text, "Flip the Lightswitch")
+        XCTAssertNil(client.lastRequest, "neither mode should call the LLM")
+    }
+
     func testCleanupModeAppliesLocalRulesWithoutTheLLM() async throws {
         let client = RecordingClient()
         let result = try await runner(client: client)

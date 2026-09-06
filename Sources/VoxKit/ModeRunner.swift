@@ -46,9 +46,14 @@ public struct ModeRunner: Sendable {
 
         switch mode.kind {
         case .raw:
-            return ModeResult(text: trimmed, mode: mode.name, kind: .raw)
+            // No LLM ever sees this text, so the glossary hint below can't
+            // help — VocabCorrector is the only shot at fixing a split
+            // compound term here. See its header for why that's a narrow,
+            // proper-nouns-only rewrite rather than a general one.
+            return ModeResult(text: VocabCorrector.apply(vocabulary: vocabulary, to: trimmed), mode: mode.name, kind: .raw)
         case .cleanup:
-            return ModeResult(text: TextCleanup.clean(trimmed), mode: mode.name, kind: .cleanup)
+            let cleaned = TextCleanup.clean(trimmed)
+            return ModeResult(text: VocabCorrector.apply(vocabulary: vocabulary, to: cleaned), mode: mode.name, kind: .cleanup)
         case .llm:
             // An empty transcript means the mic captured nothing; spending an
             // LLM round trip on it would only hallucinate content.
@@ -88,8 +93,13 @@ public struct ModeRunner: Sendable {
         let terms = VocabInjector.normalize(vocabulary)
         guard !terms.isEmpty else { return prompt }
         let glossary = """
-            The speaker often uses these names and terms; when a word in the transcript is a \
-            misheard or misspelled version of one, use this spelling: \(terms.joined(separator: ", ")).
+            The speaker often uses these names and terms: \(terms.joined(separator: ", ")). When a \
+            word or short run of words in the transcript is a misheard or misspelled version of one \
+            of them, use this spelling instead — including when a term was transcribed as separate \
+            words that only sound like it split apart (e.g. "light switch" for a seeded "Lightswitch"). \
+            Use the surrounding sentence to judge intent: only rewrite when the term is clearly meant: \
+            leave a phrase alone if it reads as ordinary language in context, even if part of it \
+            happens to match one of these terms.
             """
         return prompt.isEmpty ? glossary : prompt + "\n\n" + glossary
     }

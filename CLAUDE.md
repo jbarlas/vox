@@ -82,25 +82,48 @@ coverage — verify changes there by actually running the CLI or the app.
 - **Seeding from a folder only scans `.md`/`.txt` — anything wider needs
   its own gate, not just a bigger extension set.** `CMakeLists.txt` matches
   `.txt` and is pure build syntax; `CorpusVocabularyExtractor.textFiles`
-  skips it by name and skips `vendor`/`node_modules`/`build`/`dist`/`Pods`/
-  `DerivedData`/`target` directories outright so seeding a project root
-  doesn't pull a vendored dependency's docs in as "vocabulary." If code
-  files (`.swift`, `.py`, ...) are ever added to `supportedExtensions`,
-  they need a per-language keyword denylist first — `initial_prompt` biasing
-  can't tell "a variable name the user might dictate" from "a language
-  keyword that shows up in every file of that type" (`if`, `elif`, `STREQUAL`),
-  and the latter will otherwise dominate the term list purely on frequency.
+  skips it by name and skips `vendor`/`node_modules`/`Pods`/`DerivedData`
+  directories outright so seeding a project root doesn't pull a vendored
+  dependency's docs in as "vocabulary." That list is deliberately narrow —
+  `build`/`dist`/`target` were tried and dropped: all three are plausible
+  names for a person's own notes folder ("PC build," "Q3 targets"), and a
+  wrongly-skipped real folder is worse than an occasional missed build
+  directory. If code files (`.swift`, `.py`, ...) are ever added to
+  `supportedExtensions`, they need a per-language keyword denylist first —
+  `initial_prompt` biasing can't tell "a variable name the user might
+  dictate" from "a language keyword that shows up in every file of that
+  type" (`if`, `elif`, `STREQUAL`), and the latter will otherwise dominate
+  the term list purely on frequency.
 
-- **`initial_prompt` is a soft bias, not a hard constraint — it does not
-  reliably force a compound spelling.** A seeded term like "Lightswitch"
-  can still come back from whisper.cpp as "Light switch": the model's prior
-  for two extremely common English words is often stronger than the
-  prompt's nudge toward one uncommon compound. `VocabCorrector` (VoxKit)
-  patches this after the fact — for any vocabulary term that is a single
-  word splittable into two entries in the same reference frequency table
-  `CorpusVocabularyExtractor` scores against, it rejoins that split form
-  wherever it appears in the transcript. `DictationPipeline.run()` applies
-  it once, right after transcription, before either `rawTranscript` or a
-  mode sees the text. It only handles exactly-two-word splits of a single
-  run; three-plus-word compounds and single-word mishears (e.g. a genuinely
-  wrong word substituted for the seeded one) aren't addressed by it.
+- **`initial_prompt` is a soft bias, not a hard constraint — rank in the
+  prompt doesn't matter, it does not reliably force a compound spelling.**
+  A seeded term like "Lightswitch" can come back from whisper.cpp as "Light
+  switch" regardless of how prominently it's placed in the glossary: the
+  model's prior for two extremely common English words is often stronger
+  than the prompt's nudge toward one uncommon compound. Two different fixes
+  apply depending on whether an LLM mode is in play, because a blind
+  find/replace and a context-aware model need different amounts of trust:
+    - **`.llm` mode**: `ModeRunner.systemPrompt`'s glossary hint explicitly
+      calls out the split-into-separate-words case and tells the model to
+      use sentence context to judge intent before rewriting. This is the
+      *only* mechanism for `.llm` mode — it can tell "our sales force is
+      understaffed" from "log into Salesforce," which nothing deterministic
+      can. Not empirically verified against a live model in this repo; it's
+      a prompt-wording change, reasoned about but unverified end-to-end.
+    - **`.raw`/`.cleanup` modes, and the LLM-call-failed fallback**: no LLM
+      ever looks at the text, so `VocabCorrector` (VoxKit) is the only shot
+      — for any vocabulary term that reads as a proper noun (capitalized
+      surface form) and is a single word splittable into two entries in the
+      same reference frequency table `CorpusVocabularyExtractor` scores
+      against, it rejoins that split form wherever it appears in the
+      transcript. The capitalization gate exists because the plain
+      both-halves-are-real-words test alone also fired on ordinary lowercase
+      compounds genuinely spelled both ways ("multifamily" vs "multi
+      family") — false positives with no context to rule them out.
+      Capitalization narrows that a lot but doesn't fully solve it:
+      "Salesforce" is capitalized and still ambiguous with "sales force,"
+      and that residual risk is accepted for these modes specifically
+      because there's no smarter alternative available without an LLM call.
+      It only handles exactly-two-word splits of a single run; three-plus-
+      word compounds and genuine mishears (a wrong word substituted outright,
+      not a split) aren't addressed by either fix.

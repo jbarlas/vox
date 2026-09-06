@@ -43,14 +43,30 @@ final class VocabCorrectorTests: XCTestCase {
     }
 
     func testRejectsSplitsWhereEitherHalfIsAFunctionWord() {
-        // "cannot" splits cleanly into "can" + "not", both real words, but
+        // "Cannot" splits cleanly into "can" + "not", both real words, but
         // "can not" is an ordinary, frequently-spoken phrase in its own
         // right — rejoining it would be a wrong, unintended correction.
-        XCTAssertEqual(VocabCorrector.compoundCandidates(in: ["cannot"]).map(\.term), [])
+        // Capitalized so this exercises the function-word guard specifically,
+        // independent of the proper-noun casing guard below.
+        XCTAssertEqual(VocabCorrector.compoundCandidates(in: ["Cannot"]).map(\.term), [])
         XCTAssertEqual(
-            VocabCorrector.apply(vocabulary: ["cannot"], to: "I can not do that today."),
+            VocabCorrector.apply(vocabulary: ["Cannot"], to: "I can not do that today."),
             "I can not do that today."
         )
+    }
+
+    func testOnlyConsidersCapitalizedTermsProperNounCandidates() {
+        // "multifamily" -> "multi" + "family" passes every other gate, but a
+        // lowercase extracted term reads as an ordinary compound noun that's
+        // genuinely spelled both ways ("multi family building"), not a proper
+        // noun whisper is likely to have mis-split. Leave it alone.
+        XCTAssertEqual(VocabCorrector.compoundCandidates(in: ["multifamily"]).map(\.term), [])
+        XCTAssertEqual(
+            VocabCorrector.apply(vocabulary: ["multifamily"], to: "it's a multi family building"),
+            "it's a multi family building"
+        )
+        // The same split behind a capital letter is a candidate.
+        XCTAssertEqual(VocabCorrector.compoundCandidates(in: ["Multifamily"]).map(\.term), ["Multifamily"])
     }
 
     func testDeduplicatesCaseInsensitiveCollisions() {

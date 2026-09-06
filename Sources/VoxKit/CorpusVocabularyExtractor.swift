@@ -26,8 +26,14 @@ public struct CorpusVocabularyExtractor: Sendable {
     /// in the tree, so seeding a project root doesn't pull in a vendored
     /// library's docs. Matched case-insensitively; the given root itself is
     /// exempt, so `vox vocab seed ./vendor` still works if asked directly.
+    ///
+    /// Deliberately narrow: only names a real person essentially never
+    /// chooses for their own notes. `build`, `dist`, and `target` were cut
+    /// after review — all three are plausible personal folder names ("PC
+    /// build," "Q3 targets") with real cost if silently skipped, for a
+    /// narrower win than `vendor`/`node_modules` already cover.
     private static let skippedDirectoryNames: Set<String> = [
-        "vendor", "node_modules", "build", "dist", "pods", "derivedata", "target",
+        "vendor", "node_modules", "pods", "derivedata",
     ]
 
     /// `.txt`, but always build tooling rather than notes, regardless of

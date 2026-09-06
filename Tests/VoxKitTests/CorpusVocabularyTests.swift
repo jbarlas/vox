@@ -263,7 +263,7 @@ final class CorpusVocabularyTests: XCTestCase {
         XCTAssertEqual(ModeRunner.systemPrompt("Clean up.", vocabulary: []), "Clean up.")
         let withTerms = ModeRunner.systemPrompt("Clean up.", vocabulary: ["Vox", "vox", "LiteLLM"])
         XCTAssertTrue(withTerms.hasPrefix("Clean up.\n\n"))
-        XCTAssertTrue(withTerms.hasSuffix("Vox, LiteLLM."))
+        XCTAssertTrue(withTerms.contains("Vox, LiteLLM"))
     }
 
     func testOptionsWithoutMinScoreDecodeToDefault() throws {

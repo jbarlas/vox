@@ -6,8 +6,20 @@ import Foundation
 /// the decode — it is not a hard constraint — and a term made of two common
 /// words often loses to the model's much stronger prior for the split form.
 ///
-/// This runs on the transcript after decoding, independent of the prompt:
-/// for every vocabulary term with no internal separator that can be split
+/// This is a blind, no-context rewrite: it cannot tell "whisper mis-split a
+/// compound" from "the two words were what was actually said" ("Salesforce"
+/// vs. a literal sales force). An LLM mode has a strictly better tool for
+/// that already — `ModeRunner`'s glossary hint gives the model the same
+/// vocabulary *and* the sentence around it, so it can judge from context.
+/// `ModeRunner` only calls this for `.raw`/`.cleanup`, where no LLM ever
+/// looks at the text and this blind rewrite is the only option available;
+/// `.llm` mode relies on the glossary hint instead. To keep the blast radius
+/// small here, only terms that read as proper nouns (capitalized surface
+/// form, as extraction preserved it) are candidates — the split-both-real-
+/// words test alone caught ordinary lowercase compounds ("multifamily" ->
+/// "multi"/"family") that are genuinely used both ways, not just mishears.
+///
+/// For every vocabulary term with no internal separator that can be split
 /// into two substrings both recognized as ordinary English words (via the
 /// same reference frequency table `CorpusVocabularyExtractor` scores
 /// against), occurrences of the split form in the transcript are rejoined
@@ -54,14 +66,18 @@ public enum VocabCorrector {
         let second: String
     }
 
-    /// One candidate per vocabulary term that both has no internal separator
-    /// (already a single word, so not "GGML base") and splits cleanly into
-    /// two known English words.
+    /// One candidate per vocabulary term that: has no internal separator
+    /// (already a single word, so not "GGML base"); reads as a proper noun
+    /// (capitalized, the surface form extraction preserved — "Lightswitch,"
+    /// not "multifamily"); and splits cleanly into two known English words.
     static func compoundCandidates(in vocabulary: [String]) -> [Candidate] {
         var seen = Set<String>()
         var candidates: [Candidate] = []
         for term in vocabulary {
             guard term.unicodeScalars.allSatisfy({ CharacterSet.letters.contains($0) }) else { continue }
+            guard let first = term.unicodeScalars.first, CharacterSet.uppercaseLetters.contains(first) else {
+                continue
+            }
             guard seen.insert(term.lowercased()).inserted else { continue }
             guard let split = twoWordSplit(of: term) else { continue }
             candidates.append(Candidate(term: term, first: split.0, second: split.1))
