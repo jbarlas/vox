@@ -11,9 +11,10 @@ import Foundation
 /// vs. a literal sales force). An LLM mode has a strictly better tool for
 /// that already — `ModeRunner`'s glossary hint gives the model the same
 /// vocabulary *and* the sentence around it, so it can judge from context.
-/// `ModeRunner` only calls this for `.raw`/`.cleanup`, where no LLM ever
-/// looks at the text and this blind rewrite is the only option available;
-/// `.llm` mode relies on the glossary hint instead. To keep the blast radius
+/// `ModeRunner` only calls this for `.cleanup`, where no LLM ever looks at
+/// the text and this blind rewrite is the only option available. `.llm` mode
+/// relies on the glossary hint instead, and `.raw` mode and the LLM-failure
+/// fallback must return whisper.cpp's text untouched. To keep the blast radius
 /// small here, only terms that read as proper nouns (capitalized surface
 /// form, as extraction preserved it) are candidates — the split-both-real-
 /// words test alone caught ordinary lowercase compounds ("multifamily" ->

@@ -167,6 +167,42 @@ final class CorpusVocabularyTests: XCTestCase {
         XCTAssertEqual(vocabulary.sources.map(\.addedAt), [generatedAt, generatedAt])
     }
 
+    /// Settings holds a loaded copy while it is open; syncing must not
+    /// overwrite a source or exclusion the CLI wrote in the meantime.
+    func testResyncKeepsChangesMadeSinceTheCallerLoaded() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vox-corpus-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = root.appendingPathComponent("first", isDirectory: true)
+        let second = root.appendingPathComponent("second", isDirectory: true)
+        try FileManager.default.createDirectory(at: first, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: second, withIntermediateDirectories: true)
+        try "Zorblatt Zorblatt Wibblex Wibblex".write(
+            to: first.appendingPathComponent("a.md"), atomically: true, encoding: .utf8)
+        try "Quuxfoo Quuxfoo".write(to: second.appendingPathComponent("b.md"), atomically: true, encoding: .utf8)
+
+        let store = CorpusVocabularyStore(paths: VoxPaths(supportDirectory: root.appendingPathComponent("support")))
+        let stale = try store.addSources([first.path])
+
+        // Another process adds a source and excludes a term.
+        try store.addSources([second.path])
+        try store.update { $0?.exclude("Wibblex") }
+
+        let synced = try XCTUnwrap(try store.resync())
+        XCTAssertEqual(Set(synced.sources.map(\.path)), [first.path, second.path])
+        XCTAssertEqual(synced.excluded, ["wibblex"])
+        XCTAssertNotEqual(synced.sources, stale.sources)
+        XCTAssertEqual(Set(synced.activeTerms.map(\.term)), ["Zorblatt", "Quuxfoo"])
+    }
+
+    func testResyncWithNothingSeededReturnsNil() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vox-corpus-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = CorpusVocabularyStore(paths: VoxPaths(supportDirectory: root))
+        XCTAssertNil(try store.resync())
+    }
+
     func testAddSourcesTracksNewFolderAndPreservesExistingAddedAt() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("vox-corpus-\(UUID().uuidString)", isDirectory: true)

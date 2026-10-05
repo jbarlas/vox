@@ -323,6 +323,22 @@ public final class CorpusVocabularyStore {
         }
     }
 
+    /// Re-syncs the stored corpus with the sources and exclusions on disk,
+    /// read under the lock, so a source added or a term excluded by another
+    /// process since the caller last loaded is kept rather than overwritten.
+    /// Returns `nil` when nothing has been seeded.
+    @discardableResult
+    public func resync(options: CorpusExtractionOptions? = nil) throws -> CorpusVocabulary? {
+        try FileLock.withLock(at: paths.corpusVocabularyLockFile) {
+            guard let previous = try load() else { return nil }
+            return try sync(
+                sources: previous.sources,
+                options: options ?? previous.options,
+                excluded: previous.excluded
+            )
+        }
+    }
+
     /// Adds `newPaths` to whatever is already tracked (existing sources keep
     /// their original `addedAt`) and re-syncs the whole corpus.
     @discardableResult

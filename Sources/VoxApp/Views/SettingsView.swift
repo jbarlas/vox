@@ -486,9 +486,10 @@ private struct CorpusVocabularySection: View {
         run { try store.removeSources([path]) }
     }
 
+    /// Reads sources and exclusions from disk rather than this view's copy,
+    /// which goes stale if the CLI changes them while Settings is open.
     private func sync() {
-        guard let corpus else { return }
-        run { try store.sync(sources: corpus.sources, options: corpus.options, excluded: corpus.excluded) }
+        run { try store.resync() }
     }
 
     /// Extraction reads and tokenizes files on disk, so it runs detached from

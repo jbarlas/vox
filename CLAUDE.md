@@ -110,8 +110,8 @@ coverage — verify changes there by actually running the CLI or the app.
       understaffed" from "log into Salesforce," which nothing deterministic
       can. Not empirically verified against a live model in this repo; it's
       a prompt-wording change, reasoned about but unverified end-to-end.
-    - **`.raw`/`.cleanup` modes, and the LLM-call-failed fallback**: no LLM
-      ever looks at the text, so `VocabCorrector` (VoxKit) is the only shot
+    - **`.cleanup` mode only**: no LLM ever looks at the text, so
+      `VocabCorrector` (VoxKit) is the only shot
       — for any vocabulary term that reads as a proper noun (capitalized
       surface form) and is a single word splittable into two entries in the
       same reference frequency table `CorpusVocabularyExtractor` scores
@@ -122,8 +122,11 @@ coverage — verify changes there by actually running the CLI or the app.
       family") — false positives with no context to rule them out.
       Capitalization narrows that a lot but doesn't fully solve it:
       "Salesforce" is capitalized and still ambiguous with "sales force,"
-      and that residual risk is accepted for these modes specifically
+      and that residual risk is accepted for this mode specifically
       because there's no smarter alternative available without an LLM call.
       It only handles exactly-two-word splits of a single run; three-plus-
       word compounds and genuine mishears (a wrong word substituted outright,
       not a split) aren't addressed by either fix.
+    - **`.raw` mode and the LLM-call-failed fallback get no correction.**
+      Both are reported to the user as whisper.cpp's own transcript, so a
+      rewrite there would misrepresent what was heard.

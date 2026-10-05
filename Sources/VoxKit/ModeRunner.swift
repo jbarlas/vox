@@ -35,7 +35,8 @@ public struct ModeRunner: Sendable {
 
     /// `vocabulary` (user terms plus corpus-seeded ones, see
     /// `VocabularyEntry.merge`) is appended to an LLM mode's system prompt as
-    /// spelling guidance; raw and cleanup modes ignore it.
+    /// spelling guidance. Cleanup mode uses it to rejoin split proper nouns;
+    /// raw mode ignores it.
     public func run(
         transcript: String,
         mode: ModeDefinition,
@@ -46,12 +47,12 @@ public struct ModeRunner: Sendable {
 
         switch mode.kind {
         case .raw:
-            // No LLM ever sees this text, so the glossary hint below can't
-            // help — VocabCorrector is the only shot at fixing a split
-            // compound term here. See its header for why that's a narrow,
-            // proper-nouns-only rewrite rather than a general one.
-            return ModeResult(text: VocabCorrector.apply(vocabulary: vocabulary, to: trimmed), mode: mode.name, kind: .raw)
+            // Raw means the transcript, untouched: no VocabCorrector here.
+            return ModeResult(text: trimmed, mode: mode.name, kind: .raw)
         case .cleanup:
+            // No LLM ever sees this text, so the glossary hint can't help and
+            // VocabCorrector is the only shot at rejoining a split compound
+            // term. See its header for why that rewrite is proper nouns only.
             let cleaned = TextCleanup.clean(trimmed)
             return ModeResult(text: VocabCorrector.apply(vocabulary: vocabulary, to: cleaned), mode: mode.name, kind: .cleanup)
         case .llm:

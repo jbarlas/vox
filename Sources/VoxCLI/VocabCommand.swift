@@ -209,11 +209,9 @@ struct VocabCommand: ParsableCommand {
                 }
                 Stderr.write("Scanning…")
                 let started = Date()
-                let vocabulary = try store.sync(
-                    sources: previous.sources,
-                    options: extraction.resolved(over: previous.options),
-                    excluded: previous.excluded
-                )
+                guard let vocabulary = try store.resync(options: extraction.resolved(over: previous.options)) else {
+                    throw VoxError.config("Seeded vocabulary was removed while refreshing")
+                }
                 report(vocabulary, since: started, store: store)
             } catch {
                 voxError(from: error).printToStderr()

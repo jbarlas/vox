@@ -156,10 +156,9 @@ public final class DictationPipeline {
             )
             modeError = nil
         } catch {
-            // No LLM ended up looking at this text either, so it gets the
-            // same narrow, no-context correction `.raw`/`.cleanup` modes do.
-            let fallbackText = VocabCorrector.apply(vocabulary: vocabulary.map(\.term), to: transcription.text)
-            modeResult = ModeResult(text: fallbackText, mode: mode.name, kind: mode.kind)
+            // The fallback is exactly what whisper.cpp returned: the app and
+            // CLI report it as the raw transcript, so nothing may rewrite it.
+            modeResult = ModeResult(text: transcription.text, mode: mode.name, kind: mode.kind)
             modeError = VoxError.wrap(error, code: .llm, message: "Mode '\(mode.name)' failed")
         }
         timings.modeMs = Self.elapsedMs(since: modeClock)
