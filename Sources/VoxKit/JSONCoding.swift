@@ -51,7 +51,15 @@ public enum ISO8601 {
         formatter.string(from: date)
     }
 
+    /// Notion (and others) send fractional seconds: `2026-10-05T12:34:00.000Z`.
+    private static let fractionalFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        return formatter
+    }()
+
     public static func date(from string: String) -> Date? {
-        formatter.date(from: string)
+        formatter.date(from: string) ?? fractionalFormatter.date(from: string)
     }
 }

@@ -17,17 +17,33 @@ public struct CorpusTerm: Codable, Sendable, Equatable {
     }
 }
 
-/// One folder or file `vox vocab seed`/`sources add` was pointed at.
+/// One folder or file `vox vocab seed`/`sources add` was pointed at, or the
+/// connected Notion workspace.
 public struct CorpusSource: Codable, Sendable, Equatable {
+    public enum Kind: String, Codable, Sendable {
+        case folder
+        /// `path` is the local cache `NotionSyncer` mirrors pages into.
+        case notion
+    }
+
     public var path: String
     /// When this path was added to tracking. Independent of `generatedAt`,
     /// which is when the corpus was last (re-)scanned as a whole.
     public var addedAt: Date
+    /// `nil` in files written before Notion support; read as `.folder`.
+    public var kind: Kind?
+    /// Notion only: the environment variable holding the integration token.
+    /// The token itself is never stored.
+    public var tokenEnvVar: String?
 
-    public init(path: String, addedAt: Date = Date()) {
+    public init(path: String, addedAt: Date = Date(), kind: Kind? = nil, tokenEnvVar: String? = nil) {
         self.path = path
         self.addedAt = addedAt
+        self.kind = kind
+        self.tokenEnvVar = tokenEnvVar
     }
+
+    public var isNotion: Bool { kind == .notion }
 }
 
 /// Knobs for one extraction run, persisted with the result so `vox vocab
@@ -299,9 +315,54 @@ public final class CorpusVocabularyStore {
         }
     }
 
+    /// Also deletes the Notion cache, which holds copies of workspace pages.
     public func remove() throws {
+        try removeNotionCache()
         guard exists else { return }
         try fileManager.removeItem(at: paths.corpusVocabularyFile)
+    }
+
+    private func removeNotionCache() throws {
+        if fileManager.fileExists(atPath: paths.notionCacheDirectory.path) {
+            try fileManager.removeItem(at: paths.notionCacheDirectory)
+        }
+    }
+
+    /// Tracks the Notion cache as a source (replacing any earlier Notion
+    /// source, so the token variable can change) and re-syncs. Call after
+    /// `NotionSyncer` has filled the cache.
+    @discardableResult
+    public func trackNotion(tokenEnvVar: String) throws -> CorpusVocabulary {
+        try FileLock.withLock(at: paths.corpusVocabularyLockFile) {
+            let previous = try load()
+            let existing = previous?.sources.first(where: \.isNotion)
+            var sources = (previous?.sources ?? []).filter { !$0.isNotion }
+            sources.append(
+                CorpusSource(
+                    path: paths.notionCacheDirectory.path,
+                    addedAt: existing?.addedAt ?? Date(),
+                    kind: .notion,
+                    tokenEnvVar: tokenEnvVar
+                )
+            )
+            return try sync(sources: sources, options: previous?.options ?? .default, excluded: previous?.excluded ?? [])
+        }
+    }
+
+    /// Stops tracking Notion, deletes its cache and re-syncs the rest.
+    /// Returns `nil` (and clears corpus.json) when nothing else is tracked.
+    @discardableResult
+    public func untrackNotion() throws -> CorpusVocabulary? {
+        try FileLock.withLock(at: paths.corpusVocabularyLockFile) {
+            try removeNotionCache()
+            guard let previous = try load() else { return nil }
+            let remaining = previous.sources.filter { !$0.isNotion }
+            guard !remaining.isEmpty else {
+                try fileManager.removeItem(at: paths.corpusVocabularyFile)
+                return nil
+            }
+            return try sync(sources: remaining, options: previous.options, excluded: previous.excluded)
+        }
     }
 
     /// Read-modify-write under the cross-process lock, mirroring `ConfigStore`.
@@ -375,9 +436,10 @@ public final class CorpusVocabularyStore {
         }
     }
 
-    /// What `vox vocab seed` does: tracks exactly `newPaths`, keeping the
-    /// `addedAt` of any already tracked and the exclusions on disk, all read
-    /// under the lock so a concurrent change is not overwritten.
+    /// What `vox vocab seed` does: tracks exactly `newPaths` (plus a connected
+    /// Notion workspace), keeping the `addedAt` of any already tracked and the
+    /// exclusions on disk, all read under the lock so a concurrent change is
+    /// not overwritten.
     @discardableResult
     public func replaceSources(
         _ newPaths: [String],
@@ -392,8 +454,10 @@ public final class CorpusVocabularyStore {
                 (previous?.sources ?? []).map { ($0.path, $0) },
                 uniquingKeysWith: { first, _ in first }
             )
+            // Seeding names folders; a connected Notion workspace stays.
+            let notion = (previous?.sources ?? []).filter(\.isNotion)
             return try sync(
-                sources: standardized.map { tracked[$0] ?? CorpusSource(path: $0) },
+                sources: standardized.map { tracked[$0] ?? CorpusSource(path: $0) } + notion,
                 options: options,
                 excluded: previous?.excluded ?? []
             )

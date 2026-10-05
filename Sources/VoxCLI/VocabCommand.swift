@@ -16,7 +16,7 @@ struct VocabCommand: ParsableCommand {
             To manage seeded folders one at a time instead of re-listing them all \
             on every `seed`, use `vox vocab sources add/remove`.
             """,
-        subcommands: [List.self, Add.self, Remove.self, Seed.self, Refresh.self, Sources.self, Clear.self],
+        subcommands: [List.self, Add.self, Remove.self, Seed.self, Refresh.self, Sources.self, Notion.self, Clear.self],
         defaultSubcommand: List.self
     )
 
@@ -188,15 +188,15 @@ struct VocabCommand: ParsableCommand {
         }
     }
 
-    struct Refresh: ParsableCommand {
+    struct Refresh: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
-            abstract: "Re-run seeding against the previously seeded paths."
+            abstract: "Re-run seeding against the previously seeded paths, fetching Notion first if connected."
         )
 
         @OptionGroup var configOptions: ConfigOptions
         @OptionGroup var extraction: ExtractionOptions
 
-        func run() throws {
+        func run() async throws {
             do {
                 let store = CorpusVocabularyStore(paths: configOptions.paths)
                 guard let previous = try store.load() else {
@@ -205,9 +205,19 @@ struct VocabCommand: ParsableCommand {
                         detail: "Run `vox vocab seed <path>` first."
                     )
                 }
-                Stderr.write("Scanning…")
+                if previous.sources.contains(where: \.isNotion) { Stderr.write("Fetching Notion…") }
                 let started = Date()
-                guard let vocabulary = try store.resync(options: extraction.resolved(over: previous.options)) else {
+                let result = try await NotionVocabulary.refresh(
+                    store: store,
+                    options: extraction.resolved(over: previous.options),
+                    onProgress: notionProgress
+                )
+                if let notion = result.notion { reportNotion(notion) }
+                if let notionError = result.notionError {
+                    notionError.printToStderr()
+                    Stderr.write("Local folders were still synced, using the Notion pages cached before.")
+                }
+                guard let vocabulary = result.vocabulary else {
                     throw VoxError.config("Seeded vocabulary was removed while refreshing")
                 }
                 report(vocabulary, since: started, store: store)
@@ -240,7 +250,11 @@ struct VocabCommand: ParsableCommand {
                     }
                     Stdout.write("ADDED                 PATH")
                     for source in corpus.sources {
-                        Stdout.write("\(ISO8601.string(from: source.addedAt))  \(source.path)")
+                        let label =
+                            source.isNotion
+                            ? "Notion workspace (token in $\(source.tokenEnvVar ?? NotionVocabulary.defaultTokenEnvVar))"
+                            : source.path
+                        Stdout.write("\(ISO8601.string(from: source.addedAt))  \(label)")
                     }
                 } catch {
                     voxError(from: error).printToStderr()
@@ -300,6 +314,99 @@ struct VocabCommand: ParsableCommand {
         }
     }
 
+    struct Notion: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Seed the vocabulary from a Notion workspace.",
+            discussion: """
+                Create an internal integration at notion.so/profile/integrations, share \
+                the pages or teamspaces you want with it, and put its secret in an \
+                environment variable (NOTION_TOKEN by default). Vox never stores the \
+                token. Pages are cached as Markdown under the vocab folder (owner-only \
+                access) and fetched again on `refresh`; only changed pages are re-read.
+                """,
+            subcommands: [Connect.self, Sync.self, Disconnect.self]
+        )
+
+        struct Connect: AsyncParsableCommand {
+            static let configuration = CommandConfiguration(
+                abstract: "Fetch every page shared with the integration and track the workspace as a source."
+            )
+
+            @OptionGroup var configOptions: ConfigOptions
+
+            @Option(help: "Environment variable holding the integration secret.")
+            var tokenEnvVar = NotionVocabulary.defaultTokenEnvVar
+
+            func run() async throws {
+                do {
+                    let store = CorpusVocabularyStore(paths: configOptions.paths)
+                    Stderr.write("Fetching Notion…")
+                    let started = Date()
+                    let (vocabulary, notion) = try await NotionVocabulary.connect(
+                        store: store,
+                        tokenEnvVar: tokenEnvVar,
+                        onProgress: notionProgress
+                    )
+                    reportNotion(notion)
+                    report(vocabulary, since: started, store: store)
+                } catch {
+                    voxError(from: error).printToStderr()
+                    throw voxExitCode(for: error)
+                }
+            }
+        }
+
+        struct Sync: AsyncParsableCommand {
+            static let configuration = CommandConfiguration(
+                abstract: "Fetch changed Notion pages and re-sync every source (same as `vox vocab refresh`)."
+            )
+
+            @OptionGroup var configOptions: ConfigOptions
+
+            func run() async throws {
+                do {
+                    let store = CorpusVocabularyStore(paths: configOptions.paths)
+                    guard try store.load()?.sources.contains(where: \.isNotion) == true else {
+                        throw VoxError.config("Notion is not connected", detail: "Run `vox vocab notion connect` first.")
+                    }
+                    Stderr.write("Fetching Notion…")
+                    let started = Date()
+                    let result = try await NotionVocabulary.refresh(store: store, onProgress: notionProgress)
+                    if let notionError = result.notionError { throw notionError }
+                    if let notion = result.notion { reportNotion(notion) }
+                    if let vocabulary = result.vocabulary { report(vocabulary, since: started, store: store) }
+                } catch {
+                    voxError(from: error).printToStderr()
+                    throw voxExitCode(for: error)
+                }
+            }
+        }
+
+        struct Disconnect: ParsableCommand {
+            static let configuration = CommandConfiguration(
+                abstract: "Stop tracking Notion, delete its cached pages, and re-sync the rest."
+            )
+
+            @OptionGroup var configOptions: ConfigOptions
+
+            func run() throws {
+                do {
+                    let store = CorpusVocabularyStore(paths: configOptions.paths)
+                    let started = Date()
+                    guard let vocabulary = try store.untrackNotion() else {
+                        Stderr.write("Notion disconnected; no other sources, so the seeded vocabulary was cleared.")
+                        return
+                    }
+                    Stderr.write("Notion disconnected and its cached pages deleted.")
+                    report(vocabulary, since: started, store: store)
+                } catch {
+                    voxError(from: error).printToStderr()
+                    throw voxExitCode(for: error)
+                }
+            }
+        }
+    }
+
     struct Clear: ParsableCommand {
         static let configuration = CommandConfiguration(
             abstract: "Delete the seeded vocabulary (user-added terms are kept)."
@@ -341,6 +448,20 @@ struct VocabCommand: ParsableCommand {
             return options
         }
     }
+}
+
+/// Overwrites one status line on a terminal; silent when stderr is piped.
+private func notionProgress(_ report: NotionSyncReport) {
+    guard isatty(STDERR_FILENO) != 0 else { return }
+    FileHandle.standardError.write(Data("\r\(report.pagesTotal) Notion pages…".utf8))
+}
+
+private func reportNotion(_ report: NotionSyncReport) {
+    if isatty(STDERR_FILENO) != 0 { FileHandle.standardError.write(Data("\r".utf8)) }
+    var parts = ["\(report.pagesFetched) fetched", "\(report.pagesUnchanged) unchanged"]
+    if report.pagesRemoved > 0 { parts.append("\(report.pagesRemoved) removed") }
+    if report.pagesSkipped > 0 { parts.append("\(report.pagesSkipped) no longer visible") }
+    Stderr.write("Notion: \(report.pagesTotal) pages (\(parts.joined(separator: ", "))).")
 }
 
 private func report(_ vocabulary: CorpusVocabulary, since started: Date, store: CorpusVocabularyStore) {
