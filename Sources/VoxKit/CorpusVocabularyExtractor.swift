@@ -334,11 +334,16 @@ extension ReferenceWordFrequencies {
     /// scores as unseen and outranks real domain terms.
     static func share(of word: String, in shares: [String: Double] = shares) -> Double? {
         if let alias = undercountedAliases[word], let share = shares[alias] { return share }
-        if let share = shares[word] { return share }
-        for candidate in baseForms(of: word) {
-            if let share = shares[candidate] { return share }
+        let own = shares[word]
+        let base = baseForms(of: word).lazy.compactMap { shares[$0] }.first
+        // Some inflections are headwords themselves but undercounted ("files"
+        // is ~90x rarer than "file"), so the larger of the two wins.
+        switch (own, base) {
+        case let (own?, base?): return max(own, base)
+        case let (own?, nil): return own
+        case let (nil, base?): return base
+        case (nil, nil): return nil
         }
-        return nil
     }
 
     /// Candidate headwords for an inflected or contracted token, most likely
@@ -356,7 +361,7 @@ extension ReferenceWordFrequencies {
         for stem in stems.isEmpty ? [word] : stems {
             candidates += inflectionStems(of: stem)
         }
-        return candidates.filter { $0.count >= 2 && $0 != word }
+        return candidates.filter { !$0.isEmpty && $0 != word }
     }
 
     /// Words Google Books tokenizes apart, so the table's own count for the
@@ -380,18 +385,20 @@ extension ReferenceWordFrequencies {
             guard stem.count >= 3, let last = stem.last, stem.dropLast().last == last else { return nil }
             return String(stem.dropLast())
         }
+        // Order matters: the first candidate the table has is used, so the
+        // likelier reading comes first ("used" is "use", not "us").
         if word.hasSuffix("ies") { stems.append(String(word.dropLast(3)) + "y") }
-        if word.hasSuffix("es") { stems.append(String(word.dropLast(2))) }
         if word.hasSuffix("s"), !word.hasSuffix("ss") { stems.append(String(word.dropLast())) }
+        if word.hasSuffix("es") { stems.append(String(word.dropLast(2))) }
         if word.hasSuffix("ied") { stems.append(String(word.dropLast(3)) + "y") }
         if word.hasSuffix("ed") {
             let stem = String(word.dropLast(2))
-            stems += [stem, String(word.dropLast())]
+            stems += [String(word.dropLast()), stem]
             if let single = undoubled(stem) { stems.append(single) }
         }
         if word.hasSuffix("ing") {
             let stem = String(word.dropLast(3))
-            stems += [stem, stem + "e"]
+            stems += [stem + "e", stem]
             if let single = undoubled(stem) { stems.append(single) }
         }
         return stems
