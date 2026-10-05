@@ -1,4 +1,5 @@
 // swift-tools-version:5.9
+import Foundation
 import PackageDescription
 
 // Vox is a macOS product, but the platform-independent half of the core
@@ -10,10 +11,13 @@ import PackageDescription
 // `VoxCore` — has to be able to find whisper.h, or Swift fails to build the
 // module whenever it is compiled without `VoxCore` in the same invocation
 // (e.g. `make app` right after `make whisper` rewrote the headers).
-// Relative paths resolve against the working directory of `swift build`, so
-// all builds must be driven from the repo root (the Makefile always is).
+// Paths are absolute, anchored on this manifest: the default (swiftbuild)
+// build system runs the compiler from the package's parent directory, so a
+// relative `-Ivendor/...` silently misses the headers there.
+let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
+let whisperInstall = packageRoot + "/vendor/whisper.cpp/install"
 let whisperHeaderSearchPath: [SwiftSetting] = [
-    .unsafeFlags(["-Xcc", "-Ivendor/whisper.cpp/install/include"])
+    .unsafeFlags(["-Xcc", "-I" + whisperInstall + "/include"])
 ]
 
 let macOSTargets: [Target] = [
@@ -26,7 +30,7 @@ let macOSTargets: [Target] = [
             // `make whisper` (scripts/build-whisper.sh) installs a single
             // merged static archive here so this flag list never has to track
             // whisper.cpp's internal library split.
-            .unsafeFlags(["-Lvendor/whisper.cpp/install/lib"]),
+            .unsafeFlags(["-L" + whisperInstall + "/lib"]),
             .linkedLibrary("vox-whisper"),
             .linkedLibrary("c++"),
             .linkedFramework("Accelerate"),
