@@ -8,6 +8,11 @@
 # Only the top $WORDS entries are embedded; counts are stored in thousands.
 # The list holds headwords only (no inflections or contractions);
 # `ReferenceWordFrequencies.share(of:)` maps those back to their base form.
+#
+# TODO: Google Books undercounts modern words (app, repo, config), so they
+# still rank as distinctive. A more modern frequency list (e.g. wordfreq or
+# OpenSubtitles counts) would fix that; both are CC BY-SA, so check licensing
+# before switching. Good enough for now.
 set -euo pipefail
 
 WORDS="${WORDS:-50000}"
