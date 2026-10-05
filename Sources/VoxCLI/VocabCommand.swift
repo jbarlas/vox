@@ -133,14 +133,18 @@ struct VocabCommand: ParsableCommand {
                     removedUser = before - config.vocabulary.count
                 }
                 var excludedCorpus = 0
+                var recordedExclusion = false
                 _ = try CorpusVocabularyStore(paths: configOptions.paths).update { corpus in
                     guard var updated = corpus else { return }
-                    for term in terms where updated.exclude(term) {
-                        excludedCorpus += 1
+                    for term in terms {
+                        if updated.exclude(term) { excludedCorpus += 1 }
+                        recordedExclusion = true
                     }
                     corpus = updated
                 }
-                if removedUser == 0 && excludedCorpus == 0 {
+                if removedUser == 0 && excludedCorpus == 0 && !recordedExclusion {
+                    Stderr.write("No matching terms. Nothing has been seeded yet, so nothing was excluded.")
+                } else if removedUser == 0 && excludedCorpus == 0 {
                     Stderr.write("No matching terms; recorded as excluded for future seeding.")
                 } else {
                     Stderr.write("Removed \(removedUser) user term(s), excluded \(excludedCorpus) seeded term(s).")
@@ -172,16 +176,10 @@ struct VocabCommand: ParsableCommand {
 
         func run() throws {
             do {
-                let paths = self.paths.map { (($0 as NSString).expandingTildeInPath as NSString).standardizingPath }
                 let store = CorpusVocabularyStore(paths: configOptions.paths)
-                let previous = try store.load()
                 Stderr.write("Scanning…")
                 let started = Date()
-                let vocabulary = try store.sync(
-                    sources: paths.map { CorpusSource(path: $0) },
-                    options: extraction.resolved(over: .default),
-                    excluded: previous?.excluded ?? []
-                )
+                let vocabulary = try store.replaceSources(paths, options: extraction.resolved(over: .default))
                 report(vocabulary, since: started, store: store)
             } catch {
                 voxError(from: error).printToStderr()
@@ -351,6 +349,12 @@ private func report(_ vocabulary: CorpusVocabulary, since started: Date, store: 
         "Seeded \(vocabulary.activeTerms.count) terms from \(vocabulary.filesScanned) files "
             + "(\(vocabulary.tokensScanned) tokens) in \(elapsed)s → \(store.paths.corpusVocabularyFile.path)"
     )
+    if !vocabulary.missingSources.isEmpty {
+        Stderr.write(
+            "Skipped missing source(s): \(vocabulary.missingSources.joined(separator: ", ")). "
+                + "Stop tracking with `vox vocab sources remove <path>`."
+        )
+    }
     for term in vocabulary.activeTerms.prefix(20) {
         Stdout.write(term.term)
     }

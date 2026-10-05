@@ -333,6 +333,7 @@ private struct FeedbackSettings: View {
 }
 
 private struct VocabularySettings: View {
+    @State private var seeded: CorpusVocabulary?
     @ObservedObject var state: AppState
     @State private var text: String = ""
 
@@ -355,12 +356,17 @@ private struct VocabularySettings: View {
             Divider()
             CorpusVocabularySection()
         }
-        .onAppear { text = state.config.vocabulary.joined(separator: "\n") }
+        .onAppear {
+            text = state.config.vocabulary.joined(separator: "\n")
+            seeded = CorpusVocabularyStore().loadForInference()
+        }
     }
 
+    /// Seeded terms are part of what whisper.cpp receives, so the preview
+    /// includes them rather than showing user terms alone.
     private var promptPreview: String {
-        VocabInjector.initialPrompt(vocabulary: text.split(separator: "\n").map(String.init))
-            ?? "No prompt will be sent."
+        let entries = VocabularyEntry.merge(user: text.split(separator: "\n").map(String.init), corpus: seeded)
+        return VocabInjector.initialPrompt(entries: entries) ?? "No prompt will be sent."
     }
 
     private func save() {
@@ -405,9 +411,15 @@ private struct CorpusVocabularySection: View {
                                     .font(.caption)
                                     .lineLimit(1)
                                     .truncationMode(.middle)
-                                Text("Added \(source.addedAt.formatted(date: .abbreviated, time: .shortened))")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
+                                if corpus.missingSources.contains(source.path) {
+                                    Text("Not found at last sync; skipped")
+                                        .font(.caption2)
+                                        .foregroundStyle(.orange)
+                                } else {
+                                    Text("Added \(source.addedAt.formatted(date: .abbreviated, time: .shortened))")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                             Spacer()
                             Button {

@@ -359,7 +359,9 @@ extension ReferenceWordFrequencies {
         }
         var candidates = stems
         for stem in stems.isEmpty ? [word] : stems {
-            candidates += inflectionStems(of: stem)
+            // Shorter stems collide with function words and would hide real
+            // names: "Wes" is not "we", "Ming" is not "me".
+            candidates += inflectionStems(of: stem).filter { $0.count >= 3 }
         }
         return candidates.filter { !$0.isEmpty && $0 != word }
     }

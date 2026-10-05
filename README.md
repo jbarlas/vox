@@ -229,7 +229,7 @@ dropped; the top 200 survive, in their most common casing. Tune with
 `--max-terms`, `--min-count`, `--min-score`. Fenced code blocks and URLs are
 skipped; hidden folders such as `.obsidian` and `.git` are not scanned.
 
-The reference table is the top 30,000 words of
+The reference table is the top 50,000 words of
 [hackerb9/gwordlist](https://github.com/hackerb9/gwordlist) (derived from
 Google Books Ngram counts, CC BY 3.0), compiled in as
 `Sources/VoxKit/ReferenceWordFrequencies.swift`; regenerate it with
@@ -238,12 +238,12 @@ Google Books Ngram counts, CC BY 3.0), compiled in as
 Results are cached at `~/Library/Application Support/Vox/vocab/corpus.json`
 (same directory rules as `config.json`) with the source paths, options, term
 scores/counts, and your exclusions. Dictation reads that small file once per
-pipeline — extraction never runs on the inference path. Seeded terms carry
+pipeline; extraction never runs on the inference path. Seeded terms carry
 weight `0.5`, hand-added ones `1.0`: user terms lead the whisper prompt, are
 the last to be truncated from it, and win any case-insensitive collision.
 
-Extraction is linear in corpus size — about 30 MB of text per second in a
-release build (400 files / 8 MB / 870k tokens in 0.25 s on a Linux VM) — so a
+Extraction is linear in corpus size, about 30 MB of text per second in a
+release build (400 files / 8 MB / 870k tokens in 0.25 s on a Linux VM), so a
 few-thousand-note Obsidian vault seeds in seconds. Debug builds are several
 times slower.
 

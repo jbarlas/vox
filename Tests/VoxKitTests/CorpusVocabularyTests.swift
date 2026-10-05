@@ -364,4 +364,93 @@ final class CorpusVocabularyTests: XCTestCase {
             }
         }
     }
+
+    private func tempRoot() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("vox-corpus-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    private func makeNotes(_ dir: URL, _ text: String) throws {
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try text.write(to: dir.appendingPathComponent("n.md"), atomically: true, encoding: .utf8)
+    }
+
+    func testShortNamesAreNotReadAsFunctionWords() {
+        let shares = ReferenceWordFrequencies.shares
+        for (name, functionWord) in [("wes", "we"), ("ming", "me")] {
+            let share = ReferenceWordFrequencies.share(of: name) ?? 0
+            XCTAssertLessThan(share, shares[functionWord]! / 100, "\(name) must not take \(functionWord)'s share")
+        }
+        XCTAssertNotNil(ReferenceWordFrequencies.share(of: "i'm"), "contraction stems may be short")
+    }
+
+    func testNormalizedPathIsAbsolute() {
+        XCTAssertEqual(CorpusVocabularyStore.normalizedPath("notes", relativeTo: "/Users/me"), "/Users/me/notes")
+        XCTAssertEqual(CorpusVocabularyStore.normalizedPath("./a/../notes/", relativeTo: "/x"), "/x/notes")
+        XCTAssertEqual(CorpusVocabularyStore.normalizedPath("/abs/path"), "/abs/path")
+        XCTAssertFalse(CorpusVocabularyStore.normalizedPath("~/notes").hasPrefix("~"))
+    }
+
+    func testReplaceSourcesKeepsAddedAtAndStoredExclusions() throws {
+        let root = tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = root.appendingPathComponent("first"), second = root.appendingPathComponent("second")
+        try makeNotes(first, "Zorblatt Zorblatt Wibblex Wibblex")
+        try makeNotes(second, "Quuxfoo Quuxfoo")
+        let store = CorpusVocabularyStore(paths: VoxPaths(supportDirectory: root.appendingPathComponent("support")))
+
+        let seeded = try store.replaceSources([first.path], options: .default)
+        let firstAddedAt = try XCTUnwrap(seeded.sources.first).addedAt
+        try store.update { $0?.exclude("Wibblex") }
+
+        let reseeded = try store.replaceSources([first.path, second.path, first.path], options: .default)
+        XCTAssertEqual(reseeded.sources.map(\.path), [first.path, second.path])
+        XCTAssertEqual(ISO8601.string(from: reseeded.sources[0].addedAt), ISO8601.string(from: firstAddedAt))
+        XCTAssertEqual(reseeded.excluded, ["wibblex"])
+    }
+
+    func testNewPathThatDoesNotExistIsRejected() throws {
+        let root = tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = CorpusVocabularyStore(paths: VoxPaths(supportDirectory: root))
+        let missing = root.appendingPathComponent("nope").path
+        XCTAssertThrowsError(try store.replaceSources([missing], options: .default))
+        XCTAssertThrowsError(try store.addSources([missing]))
+    }
+
+    /// A renamed or unmounted folder must not block every later sync.
+    func testMissingTrackedSourceIsSkippedAndRecorded() throws {
+        let root = tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = root.appendingPathComponent("first"), second = root.appendingPathComponent("second")
+        let third = root.appendingPathComponent("third")
+        try makeNotes(first, "Zorblatt Zorblatt")
+        try makeNotes(second, "Quuxfoo Quuxfoo")
+        try makeNotes(third, "Blimpwax Blimpwax")
+        let store = CorpusVocabularyStore(paths: VoxPaths(supportDirectory: root.appendingPathComponent("support")))
+        try store.replaceSources([first.path, second.path], options: .default)
+        try FileManager.default.removeItem(at: first)
+
+        let added = try store.addSources([third.path])
+        XCTAssertEqual(added.missingSources, [first.path])
+        XCTAssertEqual(added.sources.count, 3, "a missing source stays tracked")
+        XCTAssertEqual(Set(added.terms.map(\.term)), ["Quuxfoo", "Blimpwax"])
+        XCTAssertEqual(try XCTUnwrap(try store.resync()).missingSources, [first.path])
+
+        try FileManager.default.removeItem(at: second)
+        try FileManager.default.removeItem(at: third)
+        XCTAssertThrowsError(try store.resync(), "nothing left to scan")
+    }
+
+    func testUnreadableStoreErrorPointsAtClear() throws {
+        let root = tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let paths = VoxPaths(supportDirectory: root)
+        try FileManager.default.createDirectory(at: paths.vocabularyDirectory, withIntermediateDirectories: true)
+        try Data(#"{"schema_version": 999}"#.utf8).write(to: paths.corpusVocabularyFile)
+        XCTAssertThrowsError(try CorpusVocabularyStore(paths: paths).load()) { error in
+            let detail = (error as? VoxError)?.detail ?? ""
+            XCTAssertTrue(detail.contains("vox vocab clear"), detail)
+        }
+    }
 }

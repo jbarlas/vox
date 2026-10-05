@@ -96,6 +96,9 @@ public struct CorpusVocabulary: Codable, Sendable, Equatable {
     /// Lowercased terms the user removed with `vox vocab remove`; they stay out
     /// across refreshes.
     public var excluded: [String]
+    /// Tracked sources that did not exist at the last sync. They stay tracked
+    /// (a drive may be unmounted) but are skipped instead of failing it.
+    public var missingSources: [String]
 
     public init(
         schemaVersion: Int = CorpusVocabulary.currentSchemaVersion,
@@ -105,7 +108,8 @@ public struct CorpusVocabulary: Codable, Sendable, Equatable {
         filesScanned: Int = 0,
         tokensScanned: Int = 0,
         terms: [CorpusTerm],
-        excluded: [String] = []
+        excluded: [String] = [],
+        missingSources: [String] = []
     ) {
         self.schemaVersion = schemaVersion
         self.generatedAt = generatedAt
@@ -115,6 +119,7 @@ public struct CorpusVocabulary: Codable, Sendable, Equatable {
         self.tokensScanned = tokensScanned
         self.terms = terms
         self.excluded = excluded
+        self.missingSources = missingSources
     }
 
     public init(from decoder: Decoder) throws {
@@ -139,6 +144,7 @@ public struct CorpusVocabulary: Codable, Sendable, Equatable {
         tokensScanned = try container.decodeIfPresent(Int.self, forKey: .tokensScanned) ?? 0
         terms = try container.decodeIfPresent([CorpusTerm].self, forKey: .terms) ?? []
         excluded = try container.decodeIfPresent([String].self, forKey: .excluded) ?? []
+        missingSources = try container.decodeIfPresent([String].self, forKey: .missingSources) ?? []
     }
 
     /// `terms` minus `excluded`, in rank order — what inference actually sees.
@@ -220,6 +226,30 @@ public final class CorpusVocabularyStore {
         fileManager.fileExists(atPath: paths.corpusVocabularyFile.path)
     }
 
+    /// Every write path loads first, so re-seeding cannot recover a bad file.
+    private static let clearHint = " Run `vox vocab clear` to start over, then seed again."
+
+    /// Absolute, tilde-expanded and standardized, so a relative `vox vocab
+    /// seed notes` still resolves from another directory or from the app.
+    public static func normalizedPath(
+        _ path: String,
+        relativeTo base: String = FileManager.default.currentDirectoryPath
+    ) -> String {
+        var expanded = (path as NSString).expandingTildeInPath
+        if !expanded.hasPrefix("/") {
+            expanded = (base as NSString).appendingPathComponent(expanded)
+        }
+        return (expanded as NSString).standardizingPath
+    }
+
+    /// Paths the user just typed must exist; tracked ones may go missing.
+    private func requireExisting(_ paths: [String]) throws {
+        let missing = paths.filter { !fileManager.fileExists(atPath: $0) }
+        guard missing.isEmpty else {
+            throw VoxError.config("No such file or directory: \(missing.joined(separator: ", "))")
+        }
+    }
+
     /// `nil` when nothing has been seeded yet.
     public func load() throws -> CorpusVocabulary? {
         guard exists else { return nil }
@@ -229,7 +259,7 @@ public final class CorpusVocabularyStore {
         } catch {
             throw VoxError.config(
                 "Could not read seeded vocabulary at \(paths.corpusVocabularyFile.path)",
-                detail: error.localizedDescription
+                detail: error.localizedDescription + Self.clearHint
             )
         }
         let vocabulary: CorpusVocabulary
@@ -238,13 +268,13 @@ public final class CorpusVocabularyStore {
         } catch {
             throw VoxError.config(
                 "Seeded vocabulary at \(paths.corpusVocabularyFile.path) is not valid Vox JSON",
-                detail: String(describing: error)
+                detail: String(describing: error) + Self.clearHint
             )
         }
         guard vocabulary.schemaVersion <= CorpusVocabulary.currentSchemaVersion else {
             throw VoxError.config(
                 "Seeded vocabulary schema version \(vocabulary.schemaVersion) is newer than this build supports",
-                detail: "Upgrade Vox or re-run `vox vocab seed`."
+                detail: "Upgrade Vox." + Self.clearHint
             )
         }
         return vocabulary
@@ -301,12 +331,17 @@ public final class CorpusVocabularyStore {
         excluded: [String]
     ) throws -> CorpusVocabulary {
         try FileLock.withLock(at: paths.corpusVocabularyLockFile) {
+            let present = sources.filter { fileManager.fileExists(atPath: $0.path) }
+            let missing = sources.map(\.path).filter { !fileManager.fileExists(atPath: $0) }
+            guard !present.isEmpty else {
+                throw VoxError.config("None of the tracked sources exist: \(missing.joined(separator: ", "))")
+            }
             let files = try CorpusVocabularyExtractor.textFiles(
-                under: sources.map { URL(fileURLWithPath: $0.path) }
+                under: present.map { URL(fileURLWithPath: $0.path) }
             )
             guard !files.isEmpty else {
                 throw VoxError.config(
-                    "No .md or .txt files found under: \(sources.map(\.path).joined(separator: ", "))"
+                    "No .md or .txt files found under: \(present.map(\.path).joined(separator: ", "))"
                 )
             }
             let result = try CorpusVocabularyExtractor(options: options).extract(files: files)
@@ -316,7 +351,8 @@ public final class CorpusVocabularyStore {
                 filesScanned: result.filesScanned,
                 tokensScanned: result.tokensScanned,
                 terms: result.terms,
-                excluded: excluded
+                excluded: excluded,
+                missingSources: missing
             )
             try save(vocabulary)
             return vocabulary
@@ -339,6 +375,31 @@ public final class CorpusVocabularyStore {
         }
     }
 
+    /// What `vox vocab seed` does: tracks exactly `newPaths`, keeping the
+    /// `addedAt` of any already tracked and the exclusions on disk, all read
+    /// under the lock so a concurrent change is not overwritten.
+    @discardableResult
+    public func replaceSources(
+        _ newPaths: [String],
+        options: CorpusExtractionOptions
+    ) throws -> CorpusVocabulary {
+        try FileLock.withLock(at: paths.corpusVocabularyLockFile) {
+            let previous = try load()
+            var seen = Set<String>()
+            let standardized = newPaths.map { Self.normalizedPath($0) }.filter { seen.insert($0).inserted }
+            try requireExisting(standardized)
+            let tracked = Dictionary(
+                (previous?.sources ?? []).map { ($0.path, $0) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            return try sync(
+                sources: standardized.map { tracked[$0] ?? CorpusSource(path: $0) },
+                options: options,
+                excluded: previous?.excluded ?? []
+            )
+        }
+    }
+
     /// Adds `newPaths` to whatever is already tracked (existing sources keep
     /// their original `addedAt`) and re-syncs the whole corpus.
     @discardableResult
@@ -348,11 +409,10 @@ public final class CorpusVocabularyStore {
     ) throws -> CorpusVocabulary {
         try FileLock.withLock(at: paths.corpusVocabularyLockFile) {
             let previous = try load()
-            let standardized = newPaths.map {
-                (($0 as NSString).expandingTildeInPath as NSString).standardizingPath
-            }
+            let standardized = newPaths.map { Self.normalizedPath($0) }
             var sources = previous?.sources ?? []
             let existingPaths = Set(sources.map(\.path))
+            try requireExisting(standardized.filter { !existingPaths.contains($0) })
             for path in standardized where !existingPaths.contains(path) {
                 sources.append(CorpusSource(path: path))
             }
@@ -371,7 +431,7 @@ public final class CorpusVocabularyStore {
         try FileLock.withLock(at: paths.corpusVocabularyLockFile) {
             guard let previous = try load() else { return nil }
             let standardized = Set(
-                pathsToRemove.map { (($0 as NSString).expandingTildeInPath as NSString).standardizingPath }
+                pathsToRemove.map { Self.normalizedPath($0) }
             )
             let remaining = previous.sources.filter { !standardized.contains($0.path) }
             guard !remaining.isEmpty else {

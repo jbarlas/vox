@@ -35,8 +35,7 @@ public struct ModeRunner: Sendable {
 
     /// `vocabulary` (user terms plus corpus-seeded ones, see
     /// `VocabularyEntry.merge`) is appended to an LLM mode's system prompt as
-    /// spelling guidance. Cleanup mode uses it to rejoin split proper nouns;
-    /// raw mode ignores it.
+    /// spelling guidance; raw and cleanup modes ignore it.
     public func run(
         transcript: String,
         mode: ModeDefinition,
@@ -47,14 +46,12 @@ public struct ModeRunner: Sendable {
 
         switch mode.kind {
         case .raw:
-            // Raw means the transcript, untouched: no VocabCorrector here.
             return ModeResult(text: trimmed, mode: mode.name, kind: .raw)
         case .cleanup:
-            // No LLM ever sees this text, so the glossary hint can't help and
-            // VocabCorrector is the only shot at rejoining a split compound
-            // term. See its header for why that rewrite is proper nouns only.
-            let cleaned = TextCleanup.clean(trimmed)
-            return ModeResult(text: VocabCorrector.apply(vocabulary: vocabulary, to: cleaned), mode: mode.name, kind: .cleanup)
+            // No vocabulary rewrite here: without sentence context a seeded
+            // "Pushback" cannot be told apart from a spoken "push back".
+            // Whisper's initial prompt already biased the decode.
+            return ModeResult(text: TextCleanup.clean(trimmed), mode: mode.name, kind: .cleanup)
         case .llm:
             // An empty transcript means the mic captured nothing; spending an
             // LLM round trip on it would only hallucinate content.
