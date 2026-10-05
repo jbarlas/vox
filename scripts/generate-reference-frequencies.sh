@@ -6,9 +6,11 @@
 # over the Google Books Ngram corpus (v3, 2020) restricted to dictionary words,
 # released under CC BY 3.0 (the license Google grants for the Ngram data).
 # Only the top $WORDS entries are embedded; counts are stored in thousands.
+# The list holds headwords only (no inflections or contractions);
+# `ReferenceWordFrequencies.share(of:)` maps those back to their base form.
 set -euo pipefail
 
-WORDS="${WORDS:-30000}"
+WORDS="${WORDS:-50000}"
 SOURCE_URL="https://raw.githubusercontent.com/hackerb9/gwordlist/master/frequency-alpha-alldicts.txt"
 OUT="$(dirname "$0")/../Sources/VoxKit/ReferenceWordFrequencies.swift"
 

@@ -267,6 +267,8 @@ struct TermCounter {
     mutating func ingest(_ text: String) {
         CorpusVocabularyExtractor.forEachToken(in: text) { token in
             totalTokens += 1
+            // "worktree's" counts toward "worktree" rather than taking its own slot.
+            let token = Self.droppingPossessive(token)
             guard token.unicodeScalars.count >= options.minLength, !isNumeric(token) else { return }
             let key = token.lowercased()
             entries[key, default: Entry()].count += 1
@@ -284,7 +286,7 @@ struct TermCounter {
         scored.reserveCapacity(entries.count)
         for (key, entry) in entries where entry.count >= options.minCount {
             let corpusShare = Double(entry.count) / total
-            let referenceShare = reference[key] ?? floor
+            let referenceShare = ReferenceWordFrequencies.share(of: key, in: reference) ?? floor
             let score = log2(corpusShare / referenceShare)
             guard score >= options.minScore else { continue }
             let form = entry.forms.max { lhs, rhs in
@@ -298,6 +300,13 @@ struct TermCounter {
             return lhs.term < rhs.term
         }
         return Array(scored.prefix(options.maxTerms))
+    }
+
+    static func droppingPossessive(_ token: String) -> String {
+        for suffix in ["'s", "\u{2019}s", "'S", "\u{2019}S"] where token.hasSuffix(suffix) {
+            return String(token.dropLast(2))
+        }
+        return token
     }
 
     private func isNumeric(_ token: String) -> Bool {
@@ -318,6 +327,75 @@ extension ReferenceWordFrequencies {
         }
         return result
     }()
+
+    /// The reference share for a lowercased token, falling back to its base
+    /// form. The table holds dictionary headwords only (`run`, not `runs`;
+    /// no contractions), so without this every inflection of a common word
+    /// scores as unseen and outranks real domain terms.
+    static func share(of word: String, in shares: [String: Double] = shares) -> Double? {
+        if let alias = undercountedAliases[word], let share = shares[alias] { return share }
+        if let share = shares[word] { return share }
+        for candidate in baseForms(of: word) {
+            if let share = shares[candidate] { return share }
+        }
+        return nil
+    }
+
+    /// Candidate headwords for an inflected or contracted token, most likely
+    /// first. Over-generating is harmless: a candidate only counts if the
+    /// table has it.
+    static func baseForms(of word: String) -> [String] {
+        let word = word.replacingOccurrences(of: "\u{2019}", with: "'")
+        var stems: [String] = []
+        if let stem = contractionStem(of: word) {
+            stems.append(stem)
+        } else if word.contains("'") {
+            return []
+        }
+        var candidates = stems
+        for stem in stems.isEmpty ? [word] : stems {
+            candidates += inflectionStems(of: stem)
+        }
+        return candidates.filter { $0.count >= 2 && $0 != word }
+    }
+
+    /// Words Google Books tokenizes apart, so the table's own count for the
+    /// joined form is far too low and would score them as distinctive.
+    private static let undercountedAliases = ["cannot": "can"]
+
+    private static let irregularNegations = ["can't": "can", "won't": "will", "shan't": "shall"]
+    private static let cliticSuffixes = ["n't", "'s", "'re", "'ll", "'ve", "'d", "'m", "'"]
+
+    private static func contractionStem(of word: String) -> String? {
+        if let irregular = irregularNegations[word] { return irregular }
+        for suffix in cliticSuffixes where word.hasSuffix(suffix) {
+            return String(word.dropLast(suffix.count))
+        }
+        return nil
+    }
+
+    private static func inflectionStems(of word: String) -> [String] {
+        var stems: [String] = []
+        func undoubled(_ stem: String) -> String? {
+            guard stem.count >= 3, let last = stem.last, stem.dropLast().last == last else { return nil }
+            return String(stem.dropLast())
+        }
+        if word.hasSuffix("ies") { stems.append(String(word.dropLast(3)) + "y") }
+        if word.hasSuffix("es") { stems.append(String(word.dropLast(2))) }
+        if word.hasSuffix("s"), !word.hasSuffix("ss") { stems.append(String(word.dropLast())) }
+        if word.hasSuffix("ied") { stems.append(String(word.dropLast(3)) + "y") }
+        if word.hasSuffix("ed") {
+            let stem = String(word.dropLast(2))
+            stems += [stem, String(word.dropLast())]
+            if let single = undoubled(stem) { stems.append(single) }
+        }
+        if word.hasSuffix("ing") {
+            let stem = String(word.dropLast(3))
+            stems += [stem, stem + "e"]
+            if let single = undoubled(stem) { stems.append(single) }
+        }
+        return stems
+    }
 
     /// Share assumed for a word the reference never saw: half of its rarest
     /// entry, so unknown words rank as rarer than anything listed but not

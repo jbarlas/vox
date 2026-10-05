@@ -281,4 +281,49 @@ final class CorpusVocabularyTests: XCTestCase {
         XCTAssertGreaterThan(shares["coffee"]!, ReferenceWordFrequencies.unseenShare)
         XCTAssertNil(shares["zorblatt"])
     }
+
+    func testInflectionsAndContractionsResolveToTheirHeadword() {
+        let shares = ReferenceWordFrequencies.shares
+        let cases = [
+            "runs": "run", "files": "file", "shows": "show", "returns": "return",
+            "keeps": "keep", "studies": "study", "stopped": "stop", "used": "use",
+            "making": "make", "running": "run", "don't": "do", "doesn't": "does",
+            "can't": "can", "won't": "will", "service's": "service", "we're": "we",
+            "they\u{2019}ll": "they",
+        ]
+        for (word, headword) in cases {
+            XCTAssertEqual(
+                ReferenceWordFrequencies.share(of: word), shares[headword],
+                "\(word) should resolve to \(headword)")
+        }
+        XCTAssertEqual(ReferenceWordFrequencies.share(of: "cannot"), shares["can"])
+        XCTAssertNil(ReferenceWordFrequencies.share(of: "zorblatts"))
+        XCTAssertNil(ReferenceWordFrequencies.share(of: "o'zorblatt"))
+    }
+
+    /// Everyday prose full of inflections and contractions must not leak
+    /// into the glossary: the headword-only reference table used to score
+    /// every one of them as unseen.
+    func testInflectedProseDoesNotOutrankDomainTerms() throws {
+        let prose = """
+            She doesn't think the files are ready. He runs the reports, keeps the notes, and \
+            returns them when the team's changes are made. They're working on it and we've \
+            reviewed what's missing. It shows that nobody cannot finish; things moved quickly \
+            and the meetings started earlier than planned. I'm sure we'll get there.
+            """
+        var parts = Array(repeating: prose, count: 20)
+        parts += Array(repeating: "Zorblatt deployed LiteLLM. Zorblatt's team tuned LiteLLM's routes.", count: 6)
+        let ranked = try CorpusVocabularyExtractor().extract(text: parts.joined(separator: "\n\n"))
+            .terms.map { $0.term.lowercased() }
+
+        XCTAssertTrue(ranked.contains("zorblatt"))
+        XCTAssertTrue(ranked.contains("litellm"))
+        XCTAssertFalse(ranked.contains("zorblatt's"), "possessive should fold into its base term")
+        for common in [
+            "doesn't", "files", "runs", "keeps", "returns", "changes", "they're", "we've",
+            "reviewed", "shows", "cannot", "moved", "meetings", "started", "planned", "i'm", "we'll",
+        ] {
+            XCTAssertFalse(ranked.contains(common), "\(common) leaked into \(ranked)")
+        }
+    }
 }
