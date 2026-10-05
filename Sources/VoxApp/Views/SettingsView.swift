@@ -399,6 +399,10 @@ private struct CorpusVocabularySection: View {
                         Button("Sync Now") { sync() }.font(.caption)
                     }
                     Button("Add Folder…") { addFolder() }.font(.caption)
+                    if corpus?.sources.contains(where: \.isNotion) != true {
+                        Button("Connect Notion") { connectNotion() }.font(.caption)
+                            .help("Reads the secret from $\(NotionVocabulary.defaultTokenEnvVar)")
+                    }
                 }
             }
 
@@ -407,7 +411,7 @@ private struct CorpusVocabularySection: View {
                     ForEach(corpus.sources, id: \.path) { source in
                         HStack {
                             VStack(alignment: .leading, spacing: 1) {
-                                Text(source.path)
+                                Text(source.isNotion ? "Notion workspace" : source.path)
                                     .font(.caption)
                                     .lineLimit(1)
                                     .truncationMode(.middle)
@@ -422,20 +426,22 @@ private struct CorpusVocabularySection: View {
                                 }
                             }
                             Spacer()
-                            Button {
-                                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: source.path)])
-                            } label: {
-                                Image(systemName: "folder")
+                            if !source.isNotion {
+                                Button {
+                                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: source.path)])
+                                } label: {
+                                    Image(systemName: "folder")
+                                }
+                                .buttonStyle(.borderless)
+                                .help("Show in Finder")
                             }
-                            .buttonStyle(.borderless)
-                            .help("Show in Finder")
                             Button {
-                                removeSource(source.path)
+                                source.isNotion ? disconnectNotion() : removeSource(source.path)
                             } label: {
                                 Image(systemName: "minus.circle")
                             }
                             .buttonStyle(.borderless)
-                            .help("Stop tracking this folder")
+                            .help(source.isNotion ? "Disconnect Notion and delete its cached pages" : "Stop tracking this folder")
                             .disabled(isSyncing)
                         }
                         .padding(.vertical, 2)
@@ -499,9 +505,53 @@ private struct CorpusVocabularySection: View {
     }
 
     /// Reads sources and exclusions from disk rather than this view's copy,
-    /// which goes stale if the CLI changes them while Settings is open.
+    /// which goes stale if the CLI changes them while Settings is open, and
+    /// fetches Notion first when it is connected. A Notion failure is shown
+    /// but does not stop the folders from syncing.
     private func sync() {
-        run { try store.resync() }
+        runAsync {
+            let result = try await NotionVocabulary.refresh(store: store)
+            return (result.vocabulary, result.notionError.map(Self.describe))
+        }
+    }
+
+    private func connectNotion() {
+        runAsync {
+            let (vocabulary, _) = try await NotionVocabulary.connect(store: store)
+            return (vocabulary, nil)
+        }
+    }
+
+    private func disconnectNotion() {
+        run { try store.untrackNotion() }
+    }
+
+    private nonisolated static func describe(_ error: Error) -> String {
+        guard let error = error as? VoxError else { return error.localizedDescription }
+        return [error.message, error.detail].compactMap { $0 }.joined(separator: ". ")
+    }
+
+    /// Like `run`, for work that awaits the network. The second value is a
+    /// non-fatal warning to show alongside the updated corpus.
+    private func runAsync(_ operation: @escaping () async throws -> (CorpusVocabulary?, String?)) {
+        error = nil
+        isSyncing = true
+        Task.detached {
+            do {
+                let (result, warning) = try await operation()
+                await MainActor.run {
+                    corpus = result
+                    error = warning
+                    isSyncing = false
+                }
+            } catch {
+                let message = Self.describe(error)
+                await MainActor.run {
+                    self.error = message
+                    isSyncing = false
+                }
+            }
+        }
     }
 
     /// Extraction reads and tokenizes files on disk, so it runs detached from

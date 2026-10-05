@@ -247,6 +247,29 @@ release build (400 files / 8 MB / 870k tokens in 0.25 s on a Linux VM), so a
 few-thousand-note Obsidian vault seeds in seconds. Debug builds are several
 times slower.
 
+#### Seeding vocabulary from Notion
+
+```bash
+export NOTION_TOKEN=…            # an internal integration's secret
+vox vocab notion connect          # fetch shared pages, track the workspace
+vox vocab refresh                 # re-fetch changed pages, re-sync everything
+vox vocab notion disconnect       # stop tracking and delete cached pages
+```
+
+Create an internal integration at notion.so/profile/integrations and share the
+pages or teamspaces you want with it; that sharing is the only scope control.
+Vox stores the variable's name, never the token. The menu bar app does not read
+your shell profile, so for Settings → Vocabulary → Connect Notion use
+`launchctl setenv NOTION_TOKEN …`. `--token-env-var` picks a different name.
+
+Pages are cached as Markdown in `vocab/notion/` (owner-only access) and scored
+with your folders as one corpus. Refresh only re-reads pages whose
+`last_edited_time` changed, removes pages that were deleted or unshared, and
+stays under Notion's rate limit of about three requests a second. If Notion
+fails during a refresh, your folders still sync against the pages already
+cached. `vox vocab seed` replaces folders but keeps Notion connected, and
+`vox vocab clear` deletes the cache. Dictation never touches the network.
+
 ### Modes
 
 - `raw`: the transcript, untouched
