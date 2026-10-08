@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Assembles dist/Vox.app around the VoxApp executable built by SwiftPM.
+# Assembles dist/Vox.app (or $VOX_APP_BUNDLE) around the VoxApp executable built by SwiftPM.
 #
 # whisper.cpp is linked statically (see build-whisper.sh), so there are no
 # dylibs to copy; ffmpeg is optional and intentionally not vendored — the
@@ -9,7 +9,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIGURATION="${CONFIGURATION:-release}"
 EXECUTABLE="$ROOT/.build/$CONFIGURATION/VoxApp"
-APP="$ROOT/dist/Vox.app"
+APP="${VOX_APP_BUNDLE:-$ROOT/dist/Vox.app}"
 
 if [[ ! -x "$EXECUTABLE" ]]; then
   echo "error: $EXECUTABLE not found. Run: make app" >&2

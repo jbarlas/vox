@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Notarizes and staples dist/Vox.app.
+# Notarizes and staples dist/Vox.app (or $VOX_APP_BUNDLE).
 #
 # Requires a Developer ID-signed build (scripts/sign.sh with DEVELOPER_ID set)
 # and either a stored notarytool keychain profile or Apple ID credentials:
@@ -9,8 +9,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP="$ROOT/dist/Vox.app"
-ARCHIVE="$ROOT/dist/Vox.zip"
+APP="${VOX_APP_BUNDLE:-$ROOT/dist/Vox.app}"
+ARCHIVE="${APP%.app}.zip"
 
 if [[ ! -d "$APP" ]]; then
   echo "error: $APP not found. Run: make app && make sign" >&2
