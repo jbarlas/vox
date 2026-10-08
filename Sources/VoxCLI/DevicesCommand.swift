@@ -1,0 +1,63 @@
+import ArgumentParser
+import Foundation
+import VoxCore
+import VoxKit
+
+struct Devices: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "devices",
+        abstract: "List audio input devices and which one the next recording will use.",
+        discussion: """
+            `*` marks the device the next recording opens. Pin one with \
+            `vox config set recording.input_device_uid <uid>`.
+            """
+    )
+
+    @OptionGroup var configOptions: ConfigOptions
+
+    @Flag(help: "Print JSON instead of a table.")
+    var json = false
+
+    struct Listing: Encodable {
+        let devices: [AudioDeviceInfo]
+        let defaultInputUid: String?
+        let defaultOutputUid: String?
+        let selectedUid: String?
+        let selectionReason: InputDeviceSelection.Reason
+    }
+
+    func run() throws {
+        let recording = (try? configOptions.loadConfig())?.recording ?? .default
+        let inputs = AudioDevices.inputs()
+        let defaultInput = AudioDevices.defaultInputUID
+        let choice = AudioDevices.choose(for: recording)
+        let selected = choice.uid ?? defaultInput
+
+        if json {
+            Stdout.write(try VoxJSON.string(Listing(
+                devices: inputs,
+                defaultInputUid: defaultInput,
+                defaultOutputUid: AudioDevices.defaultOutputUID,
+                selectedUid: selected,
+                selectionReason: choice.reason
+            ), pretty: true))
+            return
+        }
+        for device in inputs {
+            let marker = device.uid == selected ? "*" : " "
+            let name = device.name.padding(toLength: 28, withPad: " ", startingAt: 0)
+            let transport = device.transport.rawValue.padding(toLength: 10, withPad: " ", startingAt: 0)
+            let note = device.uid == defaultInput ? "  (system default)" : ""
+            Stdout.write("\(marker) \(name) \(transport) \(device.uid)\(note)")
+        }
+        if choice.reason == .builtInOverBluetooth {
+            Stderr.write(
+                "Using the built-in mic so Bluetooth playback is not interrupted. "
+                    + "Turn this off with `vox config set recording.prefer_built_in_mic false`."
+            )
+        }
+        if let configured = recording.inputDeviceUID, !inputs.contains(where: { $0.uid == configured }) {
+            Stderr.write("Configured input '\(configured)' is not connected; recording will fail until it is.")
+        }
+    }
+}

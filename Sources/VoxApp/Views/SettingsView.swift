@@ -110,6 +110,8 @@ private struct GeneralSettings: View {
                 }
             }
 
+            MicrophoneSection(state: state)
+
             Section("Recording") {
                 LabeledContent("Max duration") {
                     Stepper(
@@ -230,6 +232,102 @@ private struct GeneralSettings: View {
                 state.save { $0[keyPath: keyPath] = newValue }
             }
         )
+    }
+}
+
+/// Picks `recording.input_device_uid` from the inputs CoreAudio currently
+/// lists, refreshed live as devices connect and the defaults change.
+private struct MicrophoneSection: View {
+    @ObservedObject var state: AppState
+    @StateObject private var devices = DeviceList()
+
+    /// Tag for "follow the system default", which `inputDeviceUID` stores as nil.
+    private static let systemDefaultTag = ""
+
+    var body: some View {
+        Section("Microphone") {
+            Picker("Input", selection: inputBinding) {
+                Text("System default (\(devices.defaultInputName ?? "none"))")
+                    .tag(Self.systemDefaultTag)
+                ForEach(devices.inputs, id: \.uid) { device in
+                    Text(device.name).tag(device.uid)
+                }
+                if let configured = state.config.recording.inputDeviceUID,
+                    !devices.inputs.contains(where: { $0.uid == configured })
+                {
+                    Text("\(configured) (not connected)").tag(configured)
+                }
+            }
+            if state.config.recording.inputDeviceUID == nil {
+                Toggle(
+                    "Use the built-in mic instead of Bluetooth headphones",
+                    isOn: preferBuiltInBinding
+                )
+                Text(
+                    "Recording from a Bluetooth headset's mic switches it to a low quality "
+                        + "call mode, which interrupts anything playing through it. Ignored "
+                        + "while the lid is closed."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            LabeledContent("Next recording uses") {
+                Text(devices.nextRecordingName(for: state.config.recording))
+            }
+        }
+    }
+
+    private var inputBinding: Binding<String> {
+        Binding(
+            get: { state.config.recording.inputDeviceUID ?? Self.systemDefaultTag },
+            set: { newValue in
+                state.save {
+                    $0.recording.inputDeviceUID = newValue == Self.systemDefaultTag ? nil : newValue
+                }
+            }
+        )
+    }
+
+    private var preferBuiltInBinding: Binding<Bool> {
+        Binding(
+            get: { state.config.recording.preferBuiltInMicOverBluetooth },
+            set: { newValue in state.save { $0.recording.preferBuiltInMic = newValue } }
+        )
+    }
+}
+
+@MainActor
+private final class DeviceList: ObservableObject {
+    @Published private(set) var inputs: [AudioDeviceInfo] = []
+    @Published private(set) var defaultInputUID: String?
+    /// Bumped on every HAL change so "Next recording uses" re-evaluates even
+    /// when only the default output moved.
+    @Published private var generation = 0
+    private var observer: AudioDevices.ChangeObserver?
+
+    init() {
+        reload()
+        observer = AudioDevices.observeChanges { [weak self] in
+            MainActor.assumeIsolated { self?.reload() }
+        }
+    }
+
+    var defaultInputName: String? {
+        inputs.first { $0.uid == defaultInputUID }?.name
+    }
+
+    func nextRecordingName(for recording: RecordingConfig) -> String {
+        _ = generation
+        let choice = AudioDevices.choose(for: recording)
+        let uid = choice.uid ?? defaultInputUID
+        let name = inputs.first { $0.uid == uid }?.name ?? uid ?? "none"
+        return choice.reason == .builtInOverBluetooth ? "\(name) (avoiding Bluetooth)" : name
+    }
+
+    private func reload() {
+        inputs = AudioDevices.inputs()
+        defaultInputUID = AudioDevices.defaultInputUID
+        generation += 1
     }
 }
 

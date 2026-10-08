@@ -90,6 +90,7 @@ overlay and each sound are configurable in Settings → Feedback, or under
 | `vox models list/download/set/remove` | Manage whisper models |
 | `vox modes list/add/remove/set-default/test` | Manage post-processing modes |
 | `vox permissions` | Check microphone and Accessibility access |
+| `vox devices` | List microphones and which one the next recording uses |
 
 Recording options: `--mode`, `--model`, `--language`, `--output`, `--timeout`,
 `--save-audio`, `--pretty`, `--quiet`, `--verbose` (adds whisper.cpp's own
@@ -187,6 +188,22 @@ to read it from.
 the transcript and the API key would otherwise cross the network in cleartext.
 For a plain-HTTP LiteLLM on a network you trust,
 `vox config set llm.allow_insecure_http true` opts out.
+
+### Microphone
+
+By default Vox records from the system default input. If that input is a
+Bluetooth headset that is also playing audio (AirPods, for example), Vox uses
+the built-in mic instead. Opening a headset's mic switches it into call mode,
+which interrupts playback and lowers its quality until the recording ends. The
+built-in mic is skipped while a MacBook's lid is closed.
+
+- `vox devices` lists inputs and marks the one the next recording will use.
+- `vox config set recording.input_device_uid <uid>` pins a device, including
+  the headset mic. `default` goes back to automatic selection.
+- `vox config set recording.prefer_built_in_mic false` always uses the system
+  default.
+
+Both are also in Settings → General → Microphone.
 
 ### Custom vocabulary
 

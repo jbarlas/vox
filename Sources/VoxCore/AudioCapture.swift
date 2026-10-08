@@ -85,8 +85,14 @@ public final class AudioCapture: NSObject {
         let inputNode = engine.inputNode
         // Before `inputFormat` is read: the format belongs to whichever device
         // the HAL unit is pointed at.
-        if let uid = config.inputDeviceUID {
-            try Self.selectInputDevice(uid: uid, on: inputNode)
+        let choice = AudioDevices.choose(for: config)
+        if let uid = choice.uid {
+            do {
+                try Self.selectInputDevice(uid: uid, on: inputNode)
+            } catch where choice.reason == .builtInOverBluetooth {
+                // Only an improvement over the default, never a reason to
+                // fail a recording.
+            }
         }
         let inputFormat = inputNode.inputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
@@ -206,11 +212,11 @@ public final class AudioCapture: NSObject {
     }
 
     private static func selectInputDevice(uid: String, on inputNode: AVAudioInputNode) throws {
-        guard let deviceID = deviceID(forUID: uid) else {
+        guard let deviceID = AudioDevices.deviceID(forUID: uid) else {
             throw VoxError(
                 code: .microphone,
                 message: "No audio input device with UID '\(uid)'",
-                detail: "Clear it with `vox config set recording.input_device_uid default`."
+                detail: "List devices with `vox devices`, or clear it with `vox config set recording.input_device_uid default`."
             )
         }
         guard let unit = inputNode.audioUnit else {
@@ -232,45 +238,6 @@ public final class AudioCapture: NSObject {
                 detail: "AudioUnitSetProperty returned \(status)."
             )
         }
-    }
-
-    private static func deviceID(forUID uid: String) -> AudioDeviceID? {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDevices,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var size: UInt32 = 0
-        guard
-            AudioObjectGetPropertyDataSize(
-                AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size) == noErr
-        else { return nil }
-        var devices = [AudioDeviceID](
-            repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
-        guard
-            AudioObjectGetPropertyData(
-                AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &devices) == noErr
-        else { return nil }
-
-        for device in devices {
-            var uidAddress = AudioObjectPropertyAddress(
-                mSelector: kAudioDevicePropertyDeviceUID,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            // CoreAudio hands back a +1 CFString here, so it has to come out
-            // through Unmanaged: a bare `CFString?` makes Swift pass a pointer
-            // to a managed reference and leaves ownership ambiguous.
-            var value: Unmanaged<CFString>?
-            var valueSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
-            guard
-                AudioObjectGetPropertyData(device, &uidAddress, 0, nil, &valueSize, &value) == noErr,
-                let value
-            else { continue }
-            guard value.takeRetainedValue() as String == uid else { continue }
-            return device
-        }
-        return nil
     }
 }
 

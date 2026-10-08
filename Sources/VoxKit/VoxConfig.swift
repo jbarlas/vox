@@ -288,17 +288,25 @@ public struct RecordingConfig: Codable, Sendable, Equatable {
     public var silenceThresholdDB: Double
     /// `nil` uses the system default input device.
     public var inputDeviceUID: String?
+    /// With no `inputDeviceUID`, record from the built-in mic rather than a
+    /// Bluetooth default input that is also the output, so playback does not
+    /// drop out (see `InputDeviceSelection`). `nil` means on.
+    public var preferBuiltInMic: Bool?
+
+    public var preferBuiltInMicOverBluetooth: Bool { preferBuiltInMic ?? true }
 
     public init(
         maxDurationSeconds: Double = 120,
         silenceTimeoutSeconds: Double? = 2.0,
         silenceThresholdDB: Double = -45,
-        inputDeviceUID: String? = nil
+        inputDeviceUID: String? = nil,
+        preferBuiltInMic: Bool? = nil
     ) {
         self.maxDurationSeconds = maxDurationSeconds
         self.silenceTimeoutSeconds = silenceTimeoutSeconds
         self.silenceThresholdDB = silenceThresholdDB
         self.inputDeviceUID = inputDeviceUID
+        self.preferBuiltInMic = preferBuiltInMic
     }
 
     public static let `default` = RecordingConfig()
@@ -312,6 +320,7 @@ public struct RecordingConfig: Codable, Sendable, Equatable {
         case silenceTimeoutSeconds
         case silenceThresholdDB = "silenceThresholdDb"
         case inputDeviceUID = "inputDeviceUid"
+        case preferBuiltInMic
     }
 
     public func validate() throws {
