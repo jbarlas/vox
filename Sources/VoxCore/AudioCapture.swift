@@ -89,9 +89,10 @@ public final class AudioCapture: NSObject {
         if let uid = choice.uid {
             do {
                 try Self.selectInputDevice(uid: uid, on: inputNode)
-            } catch where choice.reason == .builtInOverBluetooth {
+            } catch let error as VoxError where choice.reason == .builtInOverBluetooth {
                 // Only an improvement over the default, never a reason to
-                // fail a recording.
+                // fail a recording; it just records from the headset.
+                NSLog("Vox: could not switch to the built-in mic, using the default input: \(error.message)")
             }
         }
         let inputFormat = inputNode.inputFormat(forBus: 0)

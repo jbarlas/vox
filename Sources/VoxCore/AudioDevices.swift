@@ -35,15 +35,26 @@ public enum AudioDevices {
         return (value?.takeRetainedValue() as? Bool) ?? false
     }
 
-    /// The input the next recording should open, given current hardware.
-    public static func choose(for config: RecordingConfig) -> InputDeviceSelection.Choice {
-        InputDeviceSelection.choose(
-            config: config,
+    public static func snapshot() -> AudioSnapshot {
+        AudioSnapshot(
             devices: all(),
             defaultInputUID: defaultInputUID,
             defaultOutputUID: defaultOutputUID,
             builtInMicUsable: !isClamshellClosed
         )
+    }
+
+    /// The input the next recording should open, given current hardware.
+    public static func choose(for config: RecordingConfig) -> InputDeviceSelection.Choice {
+        InputDeviceSelection.choose(config: config, snapshot: snapshot())
+    }
+
+    /// The UID a recording with `choice` actually opens: the chosen device,
+    /// or the system default input when the choice leaves it alone.
+    public static func effectiveInputUID(
+        for choice: InputDeviceSelection.Choice, defaultInputUID: String? = defaultInputUID
+    ) -> String? {
+        choice.uid ?? defaultInputUID
     }
 
     /// Calls `handler` on the main queue whenever a device connects or
@@ -128,8 +139,26 @@ public enum AudioDevices {
             name: string(kAudioObjectPropertyName, of: device) ?? uid,
             transport: transport(of: device),
             hasInput: hasStreams(device, scope: kAudioObjectPropertyScopeInput),
-            hasOutput: hasStreams(device, scope: kAudioObjectPropertyScopeOutput)
+            hasOutput: hasStreams(device, scope: kAudioObjectPropertyScopeOutput),
+            subdeviceUIDs: subdeviceUIDs(of: device)
         )
+    }
+
+    /// Empty unless `device` is an aggregate (which includes multi-output
+    /// devices).
+    private static func subdeviceUIDs(of device: AudioDeviceID) -> [String] {
+        var address = address(kAudioAggregateDevicePropertyActiveSubDeviceList)
+        var size: UInt32 = 0
+        guard
+            AudioObjectHasProperty(device, &address),
+            AudioObjectGetPropertyDataSize(device, &address, 0, nil, &size) == noErr,
+            size > 0
+        else { return [] }
+        var members = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &members) == noErr else {
+            return []
+        }
+        return members.compactMap(uid(of:))
     }
 
     private static func uid(of device: AudioDeviceID) -> String? {

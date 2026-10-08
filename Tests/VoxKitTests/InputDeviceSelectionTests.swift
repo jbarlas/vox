@@ -16,7 +16,19 @@ final class InputDeviceSelectionTests: XCTestCase {
     private let usbMic = AudioDeviceInfo(
         uid: "USB-1", name: "Yeti", transport: .usb, hasInput: true, hasOutput: false)
 
-    private var allDevices: [AudioDeviceInfo] { [airpodsIn, airpodsOut, builtInMic, speakers, usbMic] }
+    private let otherSpeaker = AudioDeviceInfo(
+        uid: "BB:output", name: "Speaker", transport: .bluetooth, hasInput: false, hasOutput: true)
+    private let blackHole = AudioDeviceInfo(
+        uid: "BlackHole2ch", name: "BlackHole", transport: .virtual, hasInput: true, hasOutput: true)
+    private var multiOutput: AudioDeviceInfo {
+        AudioDeviceInfo(
+            uid: "multi", name: "Multi-Output Device", transport: .virtual, hasInput: false,
+            hasOutput: true, subdeviceUIDs: [airpodsOut.uid, blackHole.uid])
+    }
+
+    private var allDevices: [AudioDeviceInfo] {
+        [airpodsIn, airpodsOut, builtInMic, speakers, usbMic, otherSpeaker, blackHole, multiOutput]
+    }
 
     private func choose(
         config: RecordingConfig = RecordingConfig(),
@@ -27,10 +39,12 @@ final class InputDeviceSelectionTests: XCTestCase {
     ) -> InputDeviceSelection.Choice {
         InputDeviceSelection.choose(
             config: config,
-            devices: devices ?? allDevices,
-            defaultInputUID: input,
-            defaultOutputUID: output,
-            builtInMicUsable: builtInMicUsable
+            snapshot: AudioSnapshot(
+                devices: devices ?? allDevices,
+                defaultInputUID: input,
+                defaultOutputUID: output,
+                builtInMicUsable: builtInMicUsable
+            )
         )
     }
 
@@ -43,6 +57,38 @@ final class InputDeviceSelectionTests: XCTestCase {
         // Nothing is playing through the headset, so its mic costs nothing.
         let choice = choose(input: airpodsIn.uid, output: speakers.uid)
         XCTAssertEqual(choice, .init(uid: nil, reason: .systemDefault))
+    }
+
+    func testHeadsetMicWithADifferentBluetoothSpeakerKeepsDefault() {
+        // Opening the headset mic interrupts nothing playing on the speaker.
+        let choice = choose(input: airpodsIn.uid, output: otherSpeaker.uid)
+        XCTAssertEqual(choice.reason, .systemDefault)
+    }
+
+    func testMultiOutputContainingTheHeadsetPrefersBuiltInMic() {
+        let choice = choose(input: airpodsIn.uid, output: multiOutput.uid)
+        XCTAssertEqual(choice, .init(uid: builtInMic.uid, reason: .builtInOverBluetooth))
+    }
+
+    func testMultiOutputWithoutTheHeadsetKeepsDefault() {
+        let other = AudioDeviceInfo(
+            uid: "multi2", name: "Multi", transport: .virtual, hasInput: false, hasOutput: true,
+            subdeviceUIDs: [speakers.uid, blackHole.uid])
+        let choice = choose(devices: allDevices + [other], input: airpodsIn.uid, output: other.uid)
+        XCTAssertEqual(choice.reason, .systemDefault)
+    }
+
+    func testSnapshotIsNotTakenWhenConfigDecides() {
+        var evaluated = false
+        func snapshot() -> AudioSnapshot {
+            evaluated = true
+            return AudioSnapshot(devices: [], defaultInputUID: nil, defaultOutputUID: nil, builtInMicUsable: true)
+        }
+        _ = InputDeviceSelection.choose(config: RecordingConfig(inputDeviceUID: "x"), snapshot: snapshot())
+        _ = InputDeviceSelection.choose(config: RecordingConfig(preferBuiltInMic: false), snapshot: snapshot())
+        XCTAssertFalse(evaluated)
+        _ = InputDeviceSelection.choose(config: RecordingConfig(), snapshot: snapshot())
+        XCTAssertTrue(evaluated)
     }
 
     func testNonBluetoothDefaultInputIsKept() {

@@ -27,17 +27,26 @@ struct Devices: ParsableCommand {
     }
 
     func run() throws {
-        let recording = (try? configOptions.loadConfig())?.recording ?? .default
-        let inputs = AudioDevices.inputs()
-        let defaultInput = AudioDevices.defaultInputUID
-        let choice = AudioDevices.choose(for: recording)
-        let selected = choice.uid ?? defaultInput
+        // Same loading as `vox record`, so a broken config fails here too
+        // rather than listing a selection the recorder would never make.
+        let recording: RecordingConfig
+        do {
+            recording = try configOptions.loadConfig().recording
+        } catch {
+            voxError(from: error).printToStderr()
+            throw voxExitCode(for: error)
+        }
+        let snapshot = AudioDevices.snapshot()
+        let inputs = snapshot.devices.filter(\.hasInput)
+        let defaultInput = snapshot.defaultInputUID
+        let choice = InputDeviceSelection.choose(config: recording, snapshot: snapshot)
+        let selected = AudioDevices.effectiveInputUID(for: choice, defaultInputUID: defaultInput)
 
         if json {
             Stdout.write(try VoxJSON.string(Listing(
                 devices: inputs,
                 defaultInputUid: defaultInput,
-                defaultOutputUid: AudioDevices.defaultOutputUID,
+                defaultOutputUid: snapshot.defaultOutputUID,
                 selectedUid: selected,
                 selectionReason: choice.reason
             ), pretty: true))

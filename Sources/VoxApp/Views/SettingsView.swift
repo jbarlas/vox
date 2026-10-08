@@ -272,9 +272,11 @@ private struct MicrophoneSection: View {
                 .foregroundStyle(.secondary)
             }
             LabeledContent("Next recording uses") {
-                Text(devices.nextRecordingName(for: state.config.recording))
+                Text(devices.nextRecordingName)
             }
         }
+        .onAppear { devices.update(recording: state.config.recording) }
+        .onChange(of: state.config.recording) { devices.update(recording: $0) }
     }
 
     private var inputBinding: Binding<String> {
@@ -296,38 +298,60 @@ private struct MicrophoneSection: View {
     }
 }
 
+/// The current inputs and the choice the next recording would make, kept on
+/// the main actor so the view reads stored values instead of querying the HAL
+/// on every redraw.
 @MainActor
 private final class DeviceList: ObservableObject {
     @Published private(set) var inputs: [AudioDeviceInfo] = []
     @Published private(set) var defaultInputUID: String?
-    /// Bumped on every HAL change so "Next recording uses" re-evaluates even
-    /// when only the default output moved.
-    @Published private var generation = 0
+    @Published private(set) var nextRecordingName = ""
+    private var snapshot: AudioSnapshot?
+    private var recording = RecordingConfig.default
     private var observer: AudioDevices.ChangeObserver?
+    private var screenObserver: NSObjectProtocol?
 
     init() {
         reload()
         observer = AudioDevices.observeChanges { [weak self] in
             MainActor.assumeIsolated { self?.reload() }
         }
+        // Closing or opening a MacBook lid changes the displays but not the
+        // audio devices, and it decides whether the built-in mic is usable.
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reload() }
+        }
+    }
+
+    deinit {
+        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
     }
 
     var defaultInputName: String? {
         inputs.first { $0.uid == defaultInputUID }?.name
     }
 
-    func nextRecordingName(for recording: RecordingConfig) -> String {
-        _ = generation
-        let choice = AudioDevices.choose(for: recording)
-        let uid = choice.uid ?? defaultInputUID
-        let name = inputs.first { $0.uid == uid }?.name ?? uid ?? "none"
-        return choice.reason == .builtInOverBluetooth ? "\(name) (avoiding Bluetooth)" : name
+    func update(recording: RecordingConfig) {
+        self.recording = recording
+        recompute()
     }
 
     private func reload() {
-        inputs = AudioDevices.inputs()
-        defaultInputUID = AudioDevices.defaultInputUID
-        generation += 1
+        let snapshot = AudioDevices.snapshot()
+        self.snapshot = snapshot
+        inputs = snapshot.devices.filter(\.hasInput)
+        defaultInputUID = snapshot.defaultInputUID
+        recompute()
+    }
+
+    private func recompute() {
+        guard let snapshot else { return }
+        let choice = InputDeviceSelection.choose(config: recording, snapshot: snapshot)
+        let uid = AudioDevices.effectiveInputUID(for: choice, defaultInputUID: snapshot.defaultInputUID)
+        let name = snapshot.device(uid)?.name ?? uid ?? "none"
+        nextRecordingName = choice.reason == .builtInOverBluetooth ? "\(name) (avoiding Bluetooth)" : name
     }
 }
 
