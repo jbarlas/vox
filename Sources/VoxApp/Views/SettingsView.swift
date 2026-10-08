@@ -110,6 +110,8 @@ private struct GeneralSettings: View {
                 }
             }
 
+            MicrophoneSection(state: state)
+
             Section("Recording") {
                 LabeledContent("Max duration") {
                     Stepper(
@@ -230,6 +232,127 @@ private struct GeneralSettings: View {
                 state.save { $0[keyPath: keyPath] = newValue }
             }
         )
+    }
+}
+
+/// Picks `recording.input_device_uid` from the inputs CoreAudio currently
+/// lists, refreshed live as devices connect and the defaults change.
+private struct MicrophoneSection: View {
+    @ObservedObject var state: AppState
+    @StateObject private var devices = DeviceList()
+
+    /// Tag for "follow the system default", which `inputDeviceUID` stores as nil.
+    private static let systemDefaultTag = ""
+
+    var body: some View {
+        Section("Microphone") {
+            Picker("Input", selection: inputBinding) {
+                Text("System default (\(devices.defaultInputName ?? "none"))")
+                    .tag(Self.systemDefaultTag)
+                ForEach(devices.inputs, id: \.uid) { device in
+                    Text(device.name).tag(device.uid)
+                }
+                if let configured = state.config.recording.inputDeviceUID,
+                    !devices.inputs.contains(where: { $0.uid == configured })
+                {
+                    Text("\(configured) (not connected)").tag(configured)
+                }
+            }
+            if state.config.recording.inputDeviceUID == nil {
+                Toggle(
+                    "Use the built-in mic instead of Bluetooth headphones",
+                    isOn: preferBuiltInBinding
+                )
+                Text(
+                    "Recording from a Bluetooth headset's mic switches it to a low quality "
+                        + "call mode, which interrupts anything playing through it. Ignored "
+                        + "while the lid is closed."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            LabeledContent("Next recording uses") {
+                Text(devices.nextRecordingName)
+            }
+            .help("Based on the devices connected now. Checked again when each recording starts.")
+        }
+        .onAppear { devices.update(recording: state.config.recording) }
+        .onChange(of: state.config.recording) { devices.update(recording: $0) }
+    }
+
+    private var inputBinding: Binding<String> {
+        Binding(
+            get: { state.config.recording.inputDeviceUID ?? Self.systemDefaultTag },
+            set: { newValue in
+                state.save {
+                    $0.recording.inputDeviceUID = newValue == Self.systemDefaultTag ? nil : newValue
+                }
+            }
+        )
+    }
+
+    private var preferBuiltInBinding: Binding<Bool> {
+        Binding(
+            get: { state.config.recording.preferBuiltInMicOverBluetooth },
+            set: { newValue in state.save { $0.recording.preferBuiltInMic = newValue } }
+        )
+    }
+}
+
+/// The current inputs and the choice the next recording would make, kept on
+/// the main actor so the view reads stored values instead of querying the HAL
+/// on every redraw.
+@MainActor
+private final class DeviceList: ObservableObject {
+    @Published private(set) var inputs: [AudioDeviceInfo] = []
+    @Published private(set) var defaultInputUID: String?
+    @Published private(set) var nextRecordingName = ""
+    private var snapshot: AudioSnapshot?
+    private var recording = RecordingConfig.default
+    private var observer: AudioDevices.ChangeObserver?
+    private var screenObserver: NSObjectProtocol?
+
+    init() {
+        reload()
+        observer = AudioDevices.observeChanges { [weak self] in
+            MainActor.assumeIsolated { self?.reload() }
+        }
+        // Closing or opening a MacBook lid changes the displays but not the
+        // audio devices, and it decides whether the built-in mic is usable.
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reload() }
+        }
+    }
+
+    deinit {
+        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
+    }
+
+    var defaultInputName: String? {
+        inputs.first { $0.uid == defaultInputUID }?.name
+    }
+
+    func update(recording: RecordingConfig) {
+        self.recording = recording
+        recompute()
+    }
+
+    private func reload() {
+        let snapshot = AudioDevices.snapshot()
+        self.snapshot = snapshot
+        inputs = snapshot.devices.filter(\.hasInput)
+        defaultInputUID = snapshot.defaultInputUID
+        recompute()
+    }
+
+    private func recompute() {
+        guard let snapshot else { return }
+        let choice = InputDeviceSelection.choose(config: recording, snapshot: snapshot)
+        let uid = AudioDevices.effectiveInputUID(for: choice, defaultInputUID: snapshot.defaultInputUID)
+        let name = snapshot.device(uid)?.name ?? uid ?? "none"
+        nextRecordingName = choice.reason == .builtInOverBluetooth ? "\(name) (avoiding Bluetooth)" : name
     }
 }
 
