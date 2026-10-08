@@ -8,7 +8,9 @@ struct Devices: ParsableCommand {
         commandName: "devices",
         abstract: "List audio input devices and which one the next recording will use.",
         discussion: """
-            `*` marks the device the next recording opens. Pin one with \
+            `*` marks the device the next recording is expected to open, given \
+            the hardware right now. Selection runs again when recording starts, \
+            so a device change in between can change it. Pin one with \
             `vox config set recording.input_device_uid <uid>`.
             """
     )

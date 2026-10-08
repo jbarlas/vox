@@ -58,35 +58,72 @@ public enum AudioDevices {
     }
 
     /// Calls `handler` on the main queue whenever a device connects or
-    /// disconnects or the default input or output changes. Keep the returned
-    /// observer alive for as long as updates are wanted.
+    /// disconnects, the default input or output changes, or the members of a
+    /// default multi-output device change. Keep the returned observer alive
+    /// for as long as updates are wanted.
     public static func observeChanges(_ handler: @escaping () -> Void) -> ChangeObserver {
         ChangeObserver(handler: handler)
     }
 
     public final class ChangeObserver {
-        private static let selectors = [
+        private static let systemSelectors = [
             kAudioHardwarePropertyDevices,
             kAudioHardwarePropertyDefaultInputDevice,
             kAudioHardwarePropertyDefaultOutputDevice,
         ]
-        private let block: AudioObjectPropertyListenerBlock
+        private static let membersAddress = AudioDevices.address(
+            kAudioAggregateDevicePropertyActiveSubDeviceList)
+
+        private let handler: () -> Void
+        private var systemBlock: AudioObjectPropertyListenerBlock!
+        private var membersBlock: AudioObjectPropertyListenerBlock!
+        /// The default output whose member list is being watched; only set
+        /// while that output is an aggregate. Touched only on the main queue,
+        /// where every listener block runs.
+        private var watchedOutput: AudioDeviceID?
 
         fileprivate init(handler: @escaping () -> Void) {
-            block = { _, _ in handler() }
-            for selector in Self.selectors {
+            self.handler = handler
+            systemBlock = { [weak self] _, _ in
+                self?.watchDefaultOutputMembers()
+                self?.handler()
+            }
+            membersBlock = { [weak self] _, _ in self?.handler() }
+            for selector in Self.systemSelectors {
                 var address = AudioDevices.address(selector)
                 AudioObjectAddPropertyListenerBlock(
-                    AudioObjectID(kAudioObjectSystemObject), &address, .main, block)
+                    AudioObjectID(kAudioObjectSystemObject), &address, .main, systemBlock)
             }
+            watchDefaultOutputMembers()
         }
 
         deinit {
-            for selector in Self.selectors {
+            for selector in Self.systemSelectors {
                 var address = AudioDevices.address(selector)
                 AudioObjectRemovePropertyListenerBlock(
-                    AudioObjectID(kAudioObjectSystemObject), &address, .main, block)
+                    AudioObjectID(kAudioObjectSystemObject), &address, .main, systemBlock)
             }
+            unwatchOutputMembers()
+        }
+
+        /// `playsThrough` looks inside a multi-output device, so editing its
+        /// members can change the choice without any system-level change.
+        private func watchDefaultOutputMembers() {
+            let output = AudioDevices.defaultDevice(kAudioHardwarePropertyDefaultOutputDevice)
+            guard output != watchedOutput else { return }
+            unwatchOutputMembers()
+            var address = Self.membersAddress
+            guard let output, AudioObjectHasProperty(output, &address) else { return }
+            if AudioObjectAddPropertyListenerBlock(output, &address, .main, membersBlock) == noErr {
+                watchedOutput = output
+            }
+        }
+
+        private func unwatchOutputMembers() {
+            guard let watchedOutput else { return }
+            var address = Self.membersAddress
+            AudioObjectRemovePropertyListenerBlock(watchedOutput, &address, .main, membersBlock)
+            self.watchedOutput = nil
         }
     }
 
@@ -120,7 +157,7 @@ public enum AudioDevices {
         return devices
     }
 
-    private static func defaultDevice(_ selector: AudioObjectPropertySelector) -> AudioDeviceID? {
+    fileprivate static func defaultDevice(_ selector: AudioObjectPropertySelector) -> AudioDeviceID? {
         var address = address(selector)
         var device = AudioDeviceID(0)
         var size = UInt32(MemoryLayout<AudioDeviceID>.size)

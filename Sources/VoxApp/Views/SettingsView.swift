@@ -274,6 +274,7 @@ private struct MicrophoneSection: View {
             LabeledContent("Next recording uses") {
                 Text(devices.nextRecordingName)
             }
+            .help("Based on the devices connected now. Checked again when each recording starts.")
         }
         .onAppear { devices.update(recording: state.config.recording) }
         .onChange(of: state.config.recording) { devices.update(recording: $0) }
