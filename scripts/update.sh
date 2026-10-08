@@ -4,6 +4,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP=""
+CLI=""
 PULL=true
 RESTART=true
 WHISPER=vendor/whisper.cpp
@@ -12,7 +13,7 @@ WHISPER_GENERATED=bindings/javascript/package.json
 
 usage() {
   cat <<'HELP'
-Usage: scripts/update.sh [--repo PATH] [--app PATH] [--no-pull] [--no-restart]
+Usage: scripts/update.sh [--repo PATH] [--app PATH] [--cli PATH] [--no-pull] [--no-restart]
 
 Pull a clean main checkout, rebuild/install the CLI and app, and restart the
 app if it was running. Defaults to the running app, /Applications/Vox.app
@@ -22,15 +23,20 @@ if installed there, or the checkout's dist/Vox.app.
 --no-restart   Leave the app closed after the update.
 --repo PATH    Source checkout to update.
 --app PATH     App bundle to install and relaunch.
+--cli PATH     Installed vox to replace (defaults to the vox on PATH).
 HELP
 }
 
 fail() { echo "error: $*" >&2; exit 1; }
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --repo|--app)
+    --repo|--app|--cli)
       [[ $# -ge 2 && -n "$2" ]] || fail "$1 needs a path"
-      if [[ "$1" == --repo ]]; then ROOT="$2"; else APP="$2"; fi
+      case "$1" in
+        --repo) ROOT="$2" ;;
+        --app) APP="$2" ;;
+        --cli) CLI="$2" ;;
+      esac
       shift 2 ;;
     --no-pull) PULL=false; shift ;;
     --no-restart) RESTART=false; shift ;;
@@ -41,13 +47,20 @@ done
 
 [[ "$(uname -s)" == Darwin ]] || fail "Vox updates require macOS."
 
-# Resolve a bundle path through symlinks so it compares equal to the
-# executable path ps reports.
+# Resolve a path through symlinks, including its last component, so a
+# symlinked bundle compares equal to the executable path ps reports and is
+# replaced at its real location rather than by overwriting the link.
 canonical() {
-  if [[ -d "$(dirname "$1")" ]]; then
-    echo "$(cd "$(dirname "$1")" && pwd -P)/$(basename "$1")"
+  local path="$1" target
+  while [[ -L "$path" ]]; do
+    target="$(readlink "$path")"
+    [[ "$target" == /* ]] || target="$(dirname "$path")/$target"
+    path="$target"
+  done
+  if [[ -d "$(dirname "$path")" ]]; then
+    echo "$(cd "$(dirname "$path")" && pwd -P)/$(basename "$path")"
   else
-    echo "$1"
+    echo "$path"
   fi
 }
 
@@ -57,7 +70,21 @@ if [[ -n "$APP" ]]; then
   [[ "$APP" == /* ]] || APP="$PWD/$APP"
   [[ -d "$(dirname "$APP")" ]] || fail "Directory not found: $(dirname "$APP")"
   APP="$(canonical "$APP")"
+  [[ "$(basename "$APP")" == Vox.app ]] || fail "--app resolves to $APP, which is not a Vox.app bundle."
 fi
+
+# Install the CLI where the one being run lives, so a custom PREFIX install
+# is updated in place. A CLI inside an app bundle (the embedded vox-cli) is
+# replaced along with the bundle.
+[[ -n "$CLI" ]] || CLI="$(command -v vox 2>/dev/null || true)"
+[[ -z "$CLI" ]] || CLI="$(canonical "$CLI")"
+INSTALL_ARGS=()
+INSTALL_CLI=true
+case "$CLI" in
+  "") ;;
+  *.app/Contents/MacOS/*) INSTALL_CLI=false ;;
+  */bin/vox) INSTALL_ARGS=(PREFIX="${CLI%/bin/vox}") ;;
+esac
 
 ROOT="$(cd "$ROOT" && pwd -P)"
 [[ -f "$ROOT/Package.swift" && -f "$ROOT/scripts/bundle-app.sh" ]] || fail "Not a Vox checkout: $ROOT"
@@ -67,7 +94,8 @@ if $PULL; then
   [[ "$(git branch --show-current)" == main ]] || fail "Switch to main first, or use --no-pull to install the current checkout."
   # An outdated submodule pointer is not a local change: the submodule
   # update below is what repairs it.
-  [[ -z "$(git status --porcelain --ignore-submodules=all)" ]] || fail "Commit or stash local changes first, or use --no-pull."
+  # Untracked files cannot conflict with a fast-forward pull.
+  [[ -z "$(git status --porcelain --ignore-submodules=all --untracked-files=no)" ]] || fail "Commit or stash local changes first, or use --no-pull."
   if [[ -e "$WHISPER/.git" ]]; then
     edits="$(git -C "$WHISPER" status --porcelain --untracked-files=no | grep -v " $WHISPER_GENERATED\$" || true)"
     [[ -z "$edits" ]] || fail "$WHISPER has local edits. Revert them, or use --no-pull."
@@ -90,26 +118,31 @@ while read -r pid executable; do
       RUNNING_APP="$bundle"
       PIDS+=("$pid") ;;
   esac
-done < <(ps -axww -o pid=,comm=)
+done < <(ps -U "$(id -u)" -ww -o pid=,comm=)
 
 if [[ -z "$APP" ]]; then
   if [[ -n "$RUNNING_APP" ]]; then
     APP="$RUNNING_APP"
   elif [[ -d /Applications/Vox.app ]]; then
-    APP=/Applications/Vox.app
+    APP="$(canonical /Applications/Vox.app)"
   else
     mkdir -p "$ROOT/dist"
     APP="$ROOT/dist/Vox.app"
   fi
 fi
 
-# An ad hoc signature would replace a Developer ID one and reset the app's
-# microphone and Accessibility permissions.
-if [[ -d "$APP" && -z "${DEVELOPER_ID:-}" ]]; then
-  team="$(codesign -dv "$APP" 2>&1 | sed -n 's/^TeamIdentifier=//p' || true)"
-  if [[ -n "$team" && "$team" != "not set" ]]; then
-    fail "$APP is signed by team $team. Set DEVELOPER_ID to that signing identity and rerun."
-  fi
+# Microphone and Accessibility grants follow the signing team, so a bundle
+# signed ad hoc or by another team would lose them. The staged bundle's team
+# is checked against this after signing.
+team_of() {
+  local team
+  team="$(codesign -dv "$1" 2>&1 | sed -n 's/^TeamIdentifier=//p' || true)"
+  [[ "$team" == "not set" ]] || echo "$team"
+}
+INSTALLED_TEAM=""
+[[ ! -d "$APP" ]] || INSTALLED_TEAM="$(team_of "$APP")"
+if [[ -n "$INSTALLED_TEAM" && -z "${DEVELOPER_ID:-}" ]]; then
+  fail "$APP is signed by team $INSTALLED_TEAM. Set DEVELOPER_ID to that signing identity and rerun."
 fi
 
 if $PULL; then
@@ -137,8 +170,9 @@ cleanup() {
       rm -rf "$STAGING"
     fi
   fi
-  # Never leave the app stopped because a later step failed.
-  if [[ $status -ne 0 ]] && $STOPPED && ! $RESTARTED && [[ -d "$APP" ]]; then
+  # Never leave the app stopped because a later step failed, unless it was
+  # asked to stay closed.
+  if [[ $status -ne 0 ]] && $RESTART && $STOPPED && ! $RESTARTED && [[ -d "$APP" ]]; then
     echo "==> Relaunching $APP" >&2
     open "$APP" || true
   fi
@@ -149,8 +183,18 @@ STAGING="$(mktemp -d "$(dirname "$APP")/.vox-update.XXXXXX")"
 echo "==> Building Vox"
 make app sign APP_BUNDLE="$STAGING/Vox.app"
 
-echo "==> Installing the CLI"
-make install
+if [[ -n "$INSTALLED_TEAM" ]]; then
+  staged_team="$(team_of "$STAGING/Vox.app")"
+  [[ "$staged_team" == "$INSTALLED_TEAM" ]] \
+    || fail "DEVELOPER_ID signs for team ${staged_team:-none}, but $APP is signed by team $INSTALLED_TEAM. Use an identity from team $INSTALLED_TEAM."
+fi
+
+if $INSTALL_CLI; then
+  echo "==> Installing the CLI"
+  make install "${INSTALL_ARGS[@]+"${INSTALL_ARGS[@]}"}"
+else
+  echo "==> $CLI is inside an app bundle; it is updated with the app"
+fi
 
 if [[ ${#PIDS[@]} -gt 0 ]]; then
   echo "==> Quitting the running app"
@@ -180,11 +224,11 @@ if ! mv "$STAGING/Vox.app" "$APP"; then
 fi
 REPLACED=true
 
+# Set before `open`, so a failed relaunch is not retried by cleanup, and
+# also covers --no-restart, where leaving the app closed is what was asked.
+RESTARTED=true
 if $RESTART && [[ ${#PIDS[@]} -gt 0 ]]; then
   echo "==> Restarting $APP"
-  RESTARTED=true
   open "$APP"
 fi
-# --no-restart: leaving the app closed is what was asked for.
-RESTARTED=true
 echo "==> Updated CLI and $APP"

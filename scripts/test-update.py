@@ -24,6 +24,10 @@ class UpdateTests(unittest.TestCase):
         self.installed.parent.mkdir()
         self.bin = self.root / "bin"
         self.bin.mkdir()
+        # The installed CLI the updater replaces; never the host's vox.
+        self.prefix = self.root / "prefix"
+        (self.prefix / "bin").mkdir(parents=True)
+        self.cli = self.prefix / "bin/vox"
         self.log = self.root / "commands.log"
         self.env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}",
                         UPDATE_LOG=str(self.log), UPDATE_PROCESSES="")
@@ -60,7 +64,13 @@ for arg in "$@"; do
   esac
 done
 ''')
-        self.stub("codesign", 'echo "TeamIdentifier=${UPDATE_TEAM:-not set}" >&2')
+        # The staged bundle reports UPDATE_STAGED_TEAM, as if DEVELOPER_ID had
+        # signed it; defaults to the installed team.
+        self.stub("codesign", '''
+team="${UPDATE_TEAM:-not set}"
+[[ "${@: -1}" != *.vox-update.* ]] || team="${UPDATE_STAGED_TEAM:-$team}"
+echo "TeamIdentifier=$team" >&2
+''')
         self.stub("open", 'printf "open %s\\n" "$1" >> "$UPDATE_LOG"')
 
     def stub(self, name, body):
@@ -68,11 +78,12 @@ done
         path.write_text("#!/bin/bash\nset -e\n" + body + "\n")
         path.chmod(0o755)
 
-    def run_update(self, *args, app=None, cwd=None, timeout=20):
+    def run_update(self, *args, app=None, cli=None, cwd=None, timeout=20):
         # Explicit destination isolates tests from /Applications on the host.
         app = [] if app is False else ["--app", str(app or self.installed)]
         return subprocess.run(
-            ["/bin/bash", str(SCRIPT), "--repo", str(self.repo), *app, *args],
+            ["/bin/bash", str(SCRIPT), "--repo", str(self.repo), *app,
+             "--cli", str(cli or self.cli), *args],
             env=self.env, text=True, capture_output=True, timeout=timeout, cwd=cwd,
         )
 
@@ -113,7 +124,7 @@ done
             "git -C vendor/whisper.cpp checkout -- bindings/javascript/package.json",
             "git submodule update --init --recursive",
             f"make app sign APP_BUNDLE={self.installed.parent}/.vox-update.",
-            "make install [app running]",
+            f"make install PREFIX={self.prefix} [app running]",
             f"open {self.installed}",
         ])
         self.assertNotIn("-B", self.commands())
@@ -247,6 +258,57 @@ done
         self.assertIsNone(child.poll())
         self.assertTrue((self.installed / "old").exists())
         self.assertEqual(list(self.installed.parent.glob(".vox-update.*")), [])
+
+    def test_cli_inside_an_app_bundle_is_not_installed_separately(self):
+        embedded = self.installed / "Contents/MacOS/vox-cli"
+        embedded.parent.mkdir(parents=True)
+        embedded.touch()
+        result = self.run_update("--no-pull", cli=embedded)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("make install", self.commands())
+
+    def test_symlinked_cli_installs_into_the_link_targets_prefix(self):
+        link = self.root / "link/vox"
+        link.parent.mkdir()
+        link.symlink_to(self.cli)
+        result = self.run_update("--no-pull", cli=link)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"make install PREFIX={self.prefix}", self.commands())
+
+    def test_staged_bundle_from_another_team_is_not_installed(self):
+        self.installed.mkdir()
+        (self.installed / "old").touch()
+        self.env["UPDATE_TEAM"] = "ABCDE12345"
+        self.env["UPDATE_STAGED_TEAM"] = "ZYXWV98765"
+        self.env["DEVELOPER_ID"] = "Developer ID Application: Other (ZYXWV98765)"
+        child = self.running_app()
+        result = self.run_update("--no-pull")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ABCDE12345", result.stderr)
+        self.assertNotIn("make install", self.commands())
+        self.assertIsNone(child.poll())
+        self.assertTrue((self.installed / "old").exists())
+
+    def test_symlinked_app_is_replaced_at_its_target(self):
+        real = self.root / "real/Vox.app"
+        (real / "Contents/MacOS").mkdir(parents=True)
+        (real / "Contents/MacOS/Vox").write_text("old app")
+        link = self.root / "installed/Vox.app"
+        link.symlink_to(real)
+        child = self.running_app(bundle=real)
+        result = self.run_update("--no-pull", app=link)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNotNone(child.poll())
+        self.assertTrue(link.is_symlink())
+        self.assertEqual((real / "Contents/MacOS/Vox").read_text(), "new app")
+        self.assertIn(f"open {real}", self.commands())
+
+    def test_failure_after_quitting_respects_no_restart(self):
+        self.installed.mkdir()
+        self.running_app(ignore_term=True)
+        result = self.run_update("--no-pull", "--no-restart", timeout=30)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("open ", self.commands())
 
     def test_multiple_running_locations_require_an_explicit_destination(self):
         child = self.running_app()

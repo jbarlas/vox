@@ -42,6 +42,11 @@ struct Update: ParsableCommand {
             let path = URL(fileURLWithPath: (app as NSString).expandingTildeInPath).standardizedFileURL.path
             arguments += ["--app", path]
         }
+        // The script replaces this binary where it is installed, so a custom
+        // PREFIX install is updated in place rather than at Homebrew's prefix.
+        if let cli = Bundle.main.executableURL?.resolvingSymlinksInPath().path {
+            arguments += ["--cli", cli]
+        }
         if noPull { arguments.append("--no-pull") }
         if noRestart { arguments.append("--no-restart") }
         let process = Process()
