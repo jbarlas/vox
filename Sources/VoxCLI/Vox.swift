@@ -24,6 +24,7 @@ struct Vox: AsyncParsableCommand {
             Models.self,
             Modes.self,
             Permissions.self,
+            Update.self,
         ],
         defaultSubcommand: Record.self
     )

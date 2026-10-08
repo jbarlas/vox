@@ -11,10 +11,15 @@ PREFIX ?= $(shell brew --prefix 2>/dev/null || echo /usr/local)
 CONFIGURATION ?= release
 VOX := .build/$(CONFIGURATION)/vox
 WHISPER_LIB := vendor/whisper.cpp/install/lib/libvox-whisper.a
+# Records the submodule commit the library was built from, so a submodule
+# update rebuilds it. Rewritten only when the commit changes.
+WHISPER_STAMP := vendor/whisper.cpp/install/.vox-commit
+WHISPER_COMMIT := $(shell [ -e vendor/whisper.cpp/.git ] && git -C vendor/whisper.cpp rev-parse HEAD 2>/dev/null)
+APP_BUNDLE ?= dist/Vox.app
 
 # Every target must run from the repo root: Package.swift's whisper link flags
 # are relative paths.
-.PHONY: help setup whisper cli config-init model app sign notarize brew-formula test lint format install uninstall clean distclean
+.PHONY: FORCE help setup whisper cli config-init model app sign notarize brew-formula test lint format install uninstall clean distclean
 
 help: ## Show available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -25,8 +30,12 @@ setup: cli config-init model ## Build the CLI, write a starter config, download 
 
 whisper: $(WHISPER_LIB) ## Build the vendored whisper.cpp static library
 
-$(WHISPER_LIB):
+$(WHISPER_LIB): $(WHISPER_STAMP)
 	./scripts/build-whisper.sh
+
+$(WHISPER_STAMP): FORCE
+	@mkdir -p $(@D)
+	@[ "$$(cat $@ 2>/dev/null)" = "$(WHISPER_COMMIT)" ] || echo "$(WHISPER_COMMIT)" > $@
 
 cli: whisper ## Build the vox CLI
 	$(SWIFT) build -c $(CONFIGURATION) --product vox
@@ -37,17 +46,17 @@ config-init: cli ## Write a starter config if none exists
 model: ## Download the default model ($(MODEL))
 	./scripts/download-model.sh $(MODEL)
 
-app: whisper ## Build the menu bar app bundle into dist/Vox.app
+app: whisper ## Build the menu bar app bundle into $(APP_BUNDLE)
 	$(SWIFT) build -c $(CONFIGURATION) --product VoxApp
 	$(SWIFT) build -c $(CONFIGURATION) --product vox
-	CONFIGURATION=$(CONFIGURATION) ./scripts/bundle-app.sh
+	CONFIGURATION=$(CONFIGURATION) VOX_APP_BUNDLE="$(APP_BUNDLE)" ./scripts/bundle-app.sh
 	@installed="$$(command -v vox 2>/dev/null)"; \
 	if [ -n "$$installed" ] && ! cmp -s "$(VOX)" "$$installed" 2>/dev/null; then \
 		echo "==> Note: $$installed is out of date with the CLI just built; run 'make install' too, or the app and the installed vox will read/write config.json on different schemas."; \
 	fi
 
-sign: ## Sign dist/Vox.app (ad-hoc unless DEVELOPER_ID is set)
-	./scripts/sign.sh
+sign: ## Sign $(APP_BUNDLE) (ad-hoc unless DEVELOPER_ID is set)
+	VOX_APP_BUNDLE="$(APP_BUNDLE)" ./scripts/sign.sh
 
 notarize: ## Notarize and staple dist/Vox.app
 	./scripts/notarize.sh

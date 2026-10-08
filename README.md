@@ -57,6 +57,30 @@ still expose `vox` on your `PATH`:
 ln -s /Applications/Vox.app/Contents/MacOS/vox-cli /opt/homebrew/bin/vox
 ```
 
+## Updating
+
+For a source install, run:
+
+```bash
+vox update
+```
+
+This pulls `origin/main` into a clean `main` checkout, updates submodules,
+rebuilds and installs both the CLI and app, and restarts the app if it was
+running. It updates the running app's location, or `/Applications/Vox.app`
+if installed there; otherwise it uses `dist/Vox.app`. Configuration, models,
+and history are kept.
+
+The CLI remembers the source checkout it was built from. If that checkout
+moves, use `vox update --repo /path/to/vox`. Use `--app /path/to/Vox.app` to
+choose the app installation, `--no-restart` to leave it closed, or `--no-pull`
+to reinstall your current local changes instead of pulling.
+
+To bootstrap an older CLI that has no `update` command yet, run
+`git pull && bash scripts/update.sh` from the checkout. The script accepts the
+same options as `vox update`. If the installed app is signed with a Developer
+ID, set `DEVELOPER_ID` to that identity so the update signs with it too.
+
 ## Menu bar app
 
 `dist/Vox.app` runs as a menu bar item (no Dock icon). The icon reflects idle,

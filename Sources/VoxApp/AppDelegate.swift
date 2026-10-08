@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItemController: StatusItemController?
     private var hotkeyManager: HotkeyManager?
     private let state = AppState()
+    private var terminationSignal: DispatchSourceSignal?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItemController = StatusItemController(state: state)
@@ -19,6 +20,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         state.onConfigChange = { [weak self] config in
             self?.hotkeyManager?.update(with: config.hotkey)
         }
+
+        // `vox update` stops the app with SIGTERM. Quit through AppKit so
+        // applicationWillTerminate still runs; the default action exits at once.
+        signal(SIGTERM, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        source.setEventHandler { NSApp.terminate(nil) }
+        source.resume()
+        terminationSignal = source
     }
 
     func applicationWillTerminate(_ notification: Notification) {

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Signs dist/Vox.app (and the CLI, if built).
+# Signs dist/Vox.app (or $VOX_APP_BUNDLE) (and the CLI, if built).
 #
 # Ad-hoc signs by default, which is all a local/personal build needs. Set
 # DEVELOPER_ID to a "Developer ID Application: ..." identity to produce a
@@ -7,7 +7,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP="$ROOT/dist/Vox.app"
+APP="${VOX_APP_BUNDLE:-$ROOT/dist/Vox.app}"
 ENTITLEMENTS="$ROOT/Resources/Vox.entitlements"
 IDENTITY="${DEVELOPER_ID:--}"
 
