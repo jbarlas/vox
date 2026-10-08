@@ -55,11 +55,11 @@ app: whisper ## Build the menu bar app bundle into $(APP_BUNDLE)
 		echo "==> Note: $$installed is out of date with the CLI just built; run 'make install' too, or the app and the installed vox will read/write config.json on different schemas."; \
 	fi
 
-sign: ## Sign $(APP_BUNDLE) (ad-hoc unless DEVELOPER_ID is set)
+sign: ## Sign $(APP_BUNDLE) (CODE_SIGN_IDENTITY or DEVELOPER_ID; otherwise ad-hoc)
 	VOX_APP_BUNDLE="$(APP_BUNDLE)" ./scripts/sign.sh
 
-notarize: ## Notarize and staple dist/Vox.app
-	./scripts/notarize.sh
+notarize: ## Notarize and staple $(APP_BUNDLE)
+	VOX_APP_BUNDLE="$(APP_BUNDLE)" ./scripts/notarize.sh
 
 brew-formula: ## Generate dist/vox.rb for a Homebrew tap
 	./scripts/generate-brew-formula.sh
@@ -81,8 +81,8 @@ format: ## Reformat sources in place
 		|| echo "swift-format not installed; skipping (brew install swift-format)"
 
 install: cli ## Install the CLI into $(PREFIX)/bin
-	install -d $(PREFIX)/bin
-	install -m 0755 $(VOX) $(PREFIX)/bin/vox
+	install -d "$(PREFIX)/bin"
+	install -m 0755 "$(VOX)" "$(PREFIX)/bin/vox"
 	@echo "==> Installed $(PREFIX)/bin/vox"
 
 uninstall: ## Remove the installed CLI

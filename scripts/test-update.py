@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """Exercise updater ordering and failure handling without installing real software."""
 import os
+import concurrent.futures
 from pathlib import Path
+import plistlib
+import shutil
 import subprocess
+import sys
 import tempfile
 import threading
+import time
 import unittest
 
 
@@ -34,6 +39,7 @@ class UpdateTests(unittest.TestCase):
         self.env.pop("DEVELOPER_ID", None)
         self.stub("uname", 'echo Darwin')
         self.stub("ps", 'printf "%s" "${UPDATE_PROCESSES:-}"')
+        self.stub("plutil", 'echo "${UPDATE_GRACEFUL_QUIT:-true}"')
         self.stub("git", '''
 printf 'git %s\\n' "$*" >> "$UPDATE_LOG"
 if [[ "$1" == -C ]]; then
@@ -59,6 +65,10 @@ for arg in "$@"; do
   case "$arg" in
     APP_BUNDLE=*)
       bundle="${arg#APP_BUNDLE=}"
+      if [[ -n "${UPDATE_BUNDLE_FIXTURE:-}" ]]; then
+        cp -R "$UPDATE_BUNDLE_FIXTURE" "$bundle"
+        continue
+      fi
       mkdir -p "$bundle/Contents/MacOS"
       printf 'new app' > "$bundle/Contents/MacOS/Vox" ;;
   esac
@@ -69,6 +79,12 @@ done
         self.stub("codesign", '''
 team="${UPDATE_TEAM:-not set}"
 [[ "${@: -1}" != *.vox-update.* ]] || team="${UPDATE_STAGED_TEAM:-$team}"
+requirement="${UPDATE_INSTALLED_REQUIREMENT:-same-identity}"
+[[ "${@: -1}" != *.vox-update.* ]] || requirement="${UPDATE_STAGED_REQUIREMENT:-$requirement}"
+case "$1" in
+  --display) echo "# designated => $requirement"; exit 0 ;;
+  --verify) [[ "$(cat "$3")" == "$requirement" ]]; exit $? ;;
+esac
 echo "TeamIdentifier=$team" >&2
 ''')
         self.stub("open", 'printf "open %s\\n" "$1" >> "$UPDATE_LOG"')
@@ -124,7 +140,7 @@ echo "TeamIdentifier=$team" >&2
             "git -C vendor/whisper.cpp checkout -- bindings/javascript/package.json",
             "git submodule update --init --recursive",
             f"make app sign APP_BUNDLE={self.installed.parent}/.vox-update.",
-            f"make install PREFIX={self.prefix} [app running]",
+            f"make install PREFIX={self.prefix} [app stopped]",
             f"open {self.installed}",
         ])
         self.assertNotIn("-B", self.commands())
@@ -159,6 +175,15 @@ echo "TeamIdentifier=$team" >&2
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("make ", self.commands())
 
+    def test_running_legacy_app_is_not_signalled_or_replaced(self):
+        child = self.running_app()
+        self.env["UPDATE_GRACEFUL_QUIT"] = "false"
+        result = self.run_update("--no-pull")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("quit Vox manually", result.stderr)
+        self.assertIsNone(child.poll())
+        self.assertNotIn("make ", self.commands())
+
     def test_failed_build_leaves_running_app_alive_and_does_not_install(self):
         child = self.running_app()
         self.env["UPDATE_BUILD_FAIL"] = "1"
@@ -169,14 +194,16 @@ echo "TeamIdentifier=$team" >&2
         self.assertNotIn("open ", self.commands())
         self.assertEqual(list(self.installed.parent.glob(".vox-update.*")), [])
 
-    def test_failed_cli_install_leaves_running_app_alive(self):
+    def test_failed_cli_install_reopens_the_previous_app(self):
+        self.installed.mkdir()
+        (self.installed / "old").touch()
         child = self.running_app()
         self.env["UPDATE_INSTALL_STATUS"] = "2"
         result = self.run_update()
         self.assertNotEqual(result.returncode, 0)
-        self.assertIsNone(child.poll())
-        self.assertFalse(self.installed.exists())
-        self.assertNotIn("open ", self.commands())
+        self.assertIsNotNone(child.poll())
+        self.assertTrue((self.installed / "old").exists())
+        self.assertIn(f"open {self.installed}", self.commands())
 
     def test_local_reinstall_skips_git_and_can_leave_app_closed(self):
         child = self.running_app()
@@ -248,16 +275,26 @@ echo "TeamIdentifier=$team" >&2
         result = self.run_update("--no-pull")
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_app_that_will_not_quit_is_left_in_place(self):
+    def test_update_waits_for_dictation_before_installing_either_binary(self):
         self.installed.mkdir()
         (self.installed / "old").touch()
         child = self.running_app(ignore_term=True)
-        result = self.run_update("--no-pull", timeout=30)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("did not quit", result.stderr)
-        self.assertIsNone(child.poll())
-        self.assertTrue((self.installed / "old").exists())
-        self.assertEqual(list(self.installed.parent.glob(".vox-update.*")), [])
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            result = executor.submit(self.run_update, "--no-pull", timeout=40)
+            try:
+                # Longer than the old ten-second quit timeout. A long-running
+                # dictation must not be killed or have its binaries replaced.
+                time.sleep(11)
+                self.assertFalse(result.done())
+                self.assertIsNone(child.poll())
+                self.assertTrue((self.installed / "old").exists())
+                self.assertNotIn("make install", self.commands())
+            finally:
+                child.kill()
+            completed = result.result(timeout=25)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertFalse((self.installed / "old").exists())
+        self.assertIn("make install", self.commands())
 
     def test_cli_inside_an_app_bundle_is_not_installed_separately(self):
         embedded = self.installed / "Contents/MacOS/vox-cli"
@@ -305,10 +342,88 @@ echo "TeamIdentifier=$team" >&2
 
     def test_failure_after_quitting_respects_no_restart(self):
         self.installed.mkdir()
-        self.running_app(ignore_term=True)
-        result = self.run_update("--no-pull", "--no-restart", timeout=30)
+        (self.installed / "old").touch()
+        child = self.running_app()
+        self.stub("mv", '''
+[[ "$1" != */.vox-update.*/Vox.app ]] || exit 9
+exec /bin/mv "$@"
+''')
+        result = self.run_update("--no-pull", "--no-restart")
         self.assertNotEqual(result.returncode, 0)
+        self.assertIsNotNone(child.poll())
+        self.assertTrue((self.installed / "old").exists())
         self.assertNotIn("open ", self.commands())
+
+    def test_incompatible_signing_requirements_leave_both_installs_untouched(self):
+        self.installed.mkdir()
+        (self.installed / "old").touch()
+        self.env["UPDATE_INSTALLED_REQUIREMENT"] = 'cdhash H"aaaa"'
+        self.env["UPDATE_STAGED_REQUIREMENT"] = 'cdhash H"bbbb"'
+        child = self.running_app()
+        result = self.run_update("--no-pull")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--allow-permission-reset", result.stderr)
+        self.assertIsNone(child.poll())
+        self.assertTrue((self.installed / "old").exists())
+        self.assertNotIn("make install", self.commands())
+        self.assertEqual(list(self.installed.parent.glob(".vox-update.*")), [])
+
+    def test_permission_reset_requires_explicit_opt_in(self):
+        self.installed.mkdir()
+        self.env["UPDATE_STAGED_REQUIREMENT"] = 'cdhash H"bbbb"'
+        result = self.run_update("--no-pull", "--allow-permission-reset")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("grant Accessibility and Microphone permissions again", result.stdout)
+
+    @unittest.skipUnless(sys.platform == "darwin", "Requires macOS codesign")
+    def test_real_ad_hoc_requirements_accept_same_code_and_reject_changed_code(self):
+        def signed_bundle(bundle, executable):
+            (bundle / "Contents/MacOS").mkdir(parents=True)
+            # System binaries carry protected file flags. Only the executable
+            # bytes and mode belong in this disposable signing fixture.
+            shutil.copyfile(executable, bundle / "Contents/MacOS/Vox")
+            (bundle / "Contents/MacOS/Vox").chmod(0o755)
+            (bundle / "Contents/Info.plist").write_bytes(plistlib.dumps({
+                "CFBundleIdentifier": "ai.vox.Vox", "CFBundleExecutable": "Vox",
+                "CFBundlePackageType": "APPL",
+            }))
+            subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", str(bundle)],
+                           check=True, capture_output=True)
+
+        (self.bin / "codesign").unlink()
+        signed_bundle(self.installed, "/usr/bin/true")
+        same = self.root / "same/Vox.app"
+        shutil.copytree(self.installed, same)
+        different = self.root / "different/Vox.app"
+        signed_bundle(different, "/usr/bin/false")
+        self.env["UPDATE_BUNDLE_FIXTURE"] = str(different)
+        rejected = self.run_update("--no-pull")
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("--allow-permission-reset", rejected.stderr)
+        self.assertNotIn("make install", self.commands())
+
+        self.env["UPDATE_BUNDLE_FIXTURE"] = str(same)
+        accepted = self.run_update("--no-pull")
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
+        self.assertIn("make install", self.commands())
+
+    def test_embedded_cli_selects_its_own_bundle(self):
+        embedded = self.installed / "Contents/MacOS/vox-cli"
+        embedded.parent.mkdir(parents=True)
+        embedded.touch()
+        result = self.run_update("--no-pull", cli=embedded, app=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.installed / "Contents/MacOS/Vox").exists())
+        self.assertNotIn("make install", self.commands())
+
+    def test_embedded_cli_rejects_a_different_app_destination(self):
+        embedded = self.root / "other/Vox.app/Contents/MacOS/vox-cli"
+        embedded.parent.mkdir(parents=True)
+        embedded.touch()
+        result = self.run_update("--no-pull", cli=embedded)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("This CLI belongs to", result.stderr)
+        self.assertNotIn("make ", self.commands())
 
     def test_multiple_running_locations_require_an_explicit_destination(self):
         child = self.running_app()
@@ -319,6 +434,55 @@ echo "TeamIdentifier=$team" >&2
         self.assertIsNone(child.poll())
         self.assertNotIn("git pull", self.commands())
         self.assertNotIn("make ", self.commands())
+
+
+@unittest.skipUnless(sys.platform == "darwin", "Requires macOS packaging tools")
+class PackagingTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="vox-packaging-test-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.app = self.root / "custom destination/Vox.app"
+        (self.app / "Contents/MacOS").mkdir(parents=True)
+        (self.app / "Contents/MacOS/Vox").write_text("test fixture")
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+        self.log = self.root / "commands.log"
+        self.env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}",
+                        PACKAGING_LOG=str(self.log))
+        self.env.pop("DEVELOPER_ID", None)
+
+    def stub(self, name):
+        path = self.bin / name
+        path.write_text('#!/bin/bash\nprintf "%s\\n" "$*" >> "$PACKAGING_LOG"\n')
+        path.chmod(0o755)
+
+    def test_notarize_uses_custom_bundle_for_archive_submission_and_stapling(self):
+        self.stub("xcrun")
+        self.env["NOTARY_PROFILE"] = "test-profile"
+        result = subprocess.run(
+            ["make", "notarize", f"APP_BUNDLE={self.app}"],
+            cwd=SCRIPT.parent.parent, env=self.env, capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        archive = self.app.with_suffix(".zip")
+        self.assertTrue(archive.exists())
+        self.assertEqual(self.log.read_text().splitlines(), [
+            f"notarytool submit {archive} --keychain-profile test-profile --wait",
+            f"stapler staple {self.app}",
+            f"stapler validate {self.app}",
+        ])
+
+    def test_local_signing_identity_does_not_request_a_distribution_timestamp(self):
+        self.stub("codesign")
+        self.env["CODE_SIGN_IDENTITY"] = "Vox Local Development"
+        self.env["VOX_APP_BUNDLE"] = str(self.app)
+        result = subprocess.run(["/bin/bash", str(SCRIPT.with_name("sign.sh"))],
+                                env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        commands = self.log.read_text()
+        self.assertIn("--sign Vox Local Development", commands)
+        self.assertNotIn("--timestamp", commands)
 
 
 if __name__ == "__main__":

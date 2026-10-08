@@ -45,9 +45,11 @@ vox models download large-v3-turbo     # fetch another one
 vox models set large-v3-turbo          # and use it (also in Settings → General)
 ```
 
-`make sign` ad-hoc signs the app (set `DEVELOPER_ID` for a distributable build)
-and `make notarize` submits it to Apple. `make brew-formula` writes a
-build-from-source formula to `dist/vox.rb` for a tap.
+`make sign` ad-hoc signs the app by default. For repeated local builds, set
+`CODE_SIGN_IDENTITY` to a reusable code-signing certificate in your keychain;
+for a distributable build, set `DEVELOPER_ID` and use `make notarize` to submit
+it to Apple. All three targets accept `APP_BUNDLE=/path/to/Vox.app`.
+`make brew-formula` writes a build-from-source formula to `dist/vox.rb` for a tap.
 
 The bundle also carries the CLI at `Vox.app/Contents/MacOS/vox-cli`, so an
 app-only install (drag `Vox.app` to `/Applications`, no `make install`) can
@@ -69,7 +71,14 @@ This pulls `origin/main` into a clean `main` checkout, updates submodules,
 rebuilds and installs both the CLI and app, and restarts the app if it was
 running. It updates the running app's location, or `/Applications/Vox.app`
 if installed there; otherwise it uses `dist/Vox.app`. Configuration, models,
-and history are kept.
+and history are kept. If invoked through the app's embedded CLI, it updates
+that CLI's own bundle. Before installing, it waits for any active dictation
+to finish recording, transcribing, and delivering its output. You can stop
+recording with the usual hotkey; Ctrl+C cancels the waiting updater.
+Vox still completes its pending quit if the updater is cancelled.
+For the first update from an older build without this shutdown support,
+finish dictation and quit Vox manually before updating; the updater will
+refuse to signal that older running app.
 
 The CLI remembers the source checkout it was built from. If that checkout
 moves, use `vox update --repo /path/to/vox`. Use `--app /path/to/Vox.app` to
@@ -80,6 +89,15 @@ To bootstrap an older CLI that has no `update` command yet, run
 `git pull && bash scripts/update.sh` from the checkout. The script accepts the
 same options as `vox update`. If the installed app is signed with a Developer
 ID, set `DEVELOPER_ID` to that identity so the update signs with it too.
+
+App permissions depend on code-signing identity. Changed ad-hoc builds can
+lose Microphone and Accessibility grants, so the updater refuses to replace
+an app unless the old and new signing requirements are compatible. Reuse the
+same `CODE_SIGN_IDENTITY` or `DEVELOPER_ID` on every update. To migrate from
+ad-hoc signing to a certificate, or intentionally keep using ad-hoc builds,
+run `vox update --allow-permission-reset`, then grant Microphone and
+Accessibility access again in System Settings → Privacy & Security (remove
+and re-add Vox in Accessibility if necessary).
 
 ## Menu bar app
 

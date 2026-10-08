@@ -30,6 +30,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         terminationSignal = source
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Keep the normal event loop and hotkey release handling alive while
+        // recording, transcribing, or delivering output. A new quit request is
+        // made after that work finishes; no timeout cancels the dictation.
+        state.prepareToTerminate { sender.terminate(nil) } ? .terminateNow : .terminateCancel
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         hotkeyManager?.unregister()
     }

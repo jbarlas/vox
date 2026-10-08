@@ -25,6 +25,9 @@ struct Update: ParsableCommand {
     @Flag(help: "Leave the app closed after updating, even if it was running.")
     var noRestart = false
 
+    @Flag(help: "Allow a signing identity change that may require granting app permissions again.")
+    var allowPermissionReset = false
+
     func run() throws {
         let sourceRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -49,6 +52,7 @@ struct Update: ParsableCommand {
         }
         if noPull { arguments.append("--no-pull") }
         if noRestart { arguments.append("--no-restart") }
+        if allowPermissionReset { arguments.append("--allow-permission-reset") }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         process.arguments = arguments
