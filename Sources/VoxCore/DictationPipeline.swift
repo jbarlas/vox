@@ -40,6 +40,10 @@ public final class DictationPipeline {
     private let modeRunner: ModeRunner
     private let modelManager: ModelManager
     private let capture: AudioCapture
+    /// Menu bar app only; the CLI never passes one. Sees copies of the audio
+    /// while recording and is discarded before transcription, so it cannot
+    /// influence `RecordResult`.
+    private let preview: LivePreviewRunner?
     /// Set by a stop that arrives before the microphone is open — a
     /// press-and-hold release during model loading, typically.
     private let stopRequested = Flag()
@@ -49,10 +53,12 @@ public final class DictationPipeline {
         paths: VoxPaths = VoxPaths(),
         engine: TranscriptionEngine? = nil,
         modeRunner: ModeRunner? = nil,
-        modelManager: ModelManager? = nil
+        modelManager: ModelManager? = nil,
+        preview: LivePreviewRunner? = nil
     ) {
         self.config = config
         self.paths = paths
+        self.preview = preview
         self.engine = engine ?? WhisperEngine()
         self.modeRunner = modeRunner ?? ModeRunner(llmConfig: config.llm)
         self.modelManager = modelManager ?? ModelManager(paths: paths)
@@ -88,6 +94,12 @@ public final class DictationPipeline {
         // Resolve the model before opening the microphone: a multi-hundred-MB
         // download must not happen while the user is already talking.
         let modelPath = try await modelManager.ensureAvailable(model)
+        // The preview never downloads anything: a missing preview model is
+        // simply no preview, not a delay before the microphone opens.
+        var previewModelPath: URL?
+        if let preview, options.inputFile == nil, modelManager.isInstalled(preview.model) {
+            previewModelPath = paths.modelFile(for: preview.model)
+        }
 
         var timings = RecordTimings()
         let audio: PCMAudio
@@ -107,9 +119,17 @@ public final class DictationPipeline {
             }
             onStage?(.recording)
             let clock = Date()
-            let output = try await capture.record(timeout: options.timeout) { event in
+            var activePreview: LivePreviewRunner?
+            if let preview, let previewModelPath {
+                let capture = self.capture
+                preview.start(modelPath: previewModelPath) { range in capture.samples(in: range) }
+                activePreview = preview
+            }
+            defer { activePreview?.stop() }
+            let output = try await capture.record(timeout: options.timeout) { [activePreview] event in
                 switch event {
                 case .level(let level): onLevel?(level)
+                case .audio(let totalSamples): activePreview?.audioDidGrow(totalSamples: totalSamples)
                 }
             }
             timings.recordingMs = Self.elapsedMs(since: clock)

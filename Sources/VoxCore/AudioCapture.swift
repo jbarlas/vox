@@ -17,6 +17,9 @@ public final class AudioCapture: NSObject {
     public enum Event: Sendable {
         /// Instantaneous input level in dBFS, for the menu bar meter.
         case level(Double)
+        /// The buffer now holds this many 16 kHz samples; read them back with
+        /// `samples(in:)`. Drives the optional live preview.
+        case audio(totalSamples: Int)
     }
 
     private let config: RecordingConfig
@@ -58,6 +61,12 @@ public final class AudioCapture: NSObject {
     }
 
     public var isRecording: Bool { state.isRunning }
+
+    /// A copy of part of the in-flight recording, clamped to what has been
+    /// captured so far. Empty once the recording has been drained.
+    public func samples(in range: Range<Int>) -> [Float] {
+        state.copy(range)
+    }
 
     /// Records until silence, the deadline, or `stop()`.
     ///
@@ -146,7 +155,7 @@ public final class AudioCapture: NSObject {
             }
             let level = PCMAudio.levelDB(of: converted[...])
             onEvent?(.level(level))
-            self.state.append(
+            let total = self.state.append(
                 samples: converted,
                 level: level,
                 silenceThreshold: silenceThreshold,
@@ -154,6 +163,7 @@ public final class AudioCapture: NSObject {
                 deadline: deadline,
                 deadlineReason: deadlineReason
             )
+            if let total { onEvent?(.audio(totalSamples: total)) }
         }
 
         do {
@@ -308,6 +318,9 @@ private final class CaptureState: @unchecked Sendable {
         continuation = nil
     }
 
+    /// Returns the buffer size after appending, or nil when the buffer
+    /// refused the samples because the recording is over.
+    @discardableResult
     func append(
         samples newSamples: [Float],
         level: Double,
@@ -315,13 +328,14 @@ private final class CaptureState: @unchecked Sendable {
         silenceTimeout: Double?,
         deadline: Double,
         deadlineReason: StopReason
-    ) {
+    ) -> Int? {
         lock.lock()
         guard running, stopReason == nil else {
             lock.unlock()
-            return
+            return nil
         }
         samples.append(contentsOf: newSamples)
+        let total = samples.count
         let now = Date()
         if level > silenceThreshold {
             lastVoiceAt = now
@@ -339,6 +353,15 @@ private final class CaptureState: @unchecked Sendable {
         let resumed = reason.flatMap { finishLocked(reason: $0) }
         lock.unlock()
         resumed?()
+        return total
+    }
+
+    func copy(_ range: Range<Int>) -> [Float] {
+        lock.lock()
+        defer { lock.unlock() }
+        let lower = min(max(0, range.lowerBound), samples.count)
+        let upper = min(max(lower, range.upperBound), samples.count)
+        return Array(samples[lower..<upper])
     }
 
     func requestStop(reason: StopReason) {
