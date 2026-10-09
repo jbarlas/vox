@@ -27,6 +27,24 @@ final class ModeRunnerTests: XCTestCase {
         XCTAssertNil(client.lastRequest, "raw mode must never call the LLM")
     }
 
+    func testRawModeLeavesSplitVocabTermsAlone() async throws {
+        let client = RecordingClient()
+        let raw = try await runner(client: client)
+            .run(transcript: "flip the light switch", mode: .raw, vocabulary: ["Lightswitch"])
+        XCTAssertEqual(raw.text, "flip the light switch")
+    }
+
+    /// Without an LLM there is no context to tell a seeded "Pushback" from a
+    /// spoken "push back", so cleanup must not rewrite vocabulary either.
+    func testCleanupModeLeavesSplitVocabTermsAlone() async throws {
+        let client = RecordingClient()
+
+        let cleaned = try await runner(client: client)
+            .run(transcript: "um flip the light switch", mode: .cleanup, vocabulary: ["Lightswitch"])
+        XCTAssertEqual(cleaned.text, "Flip the light switch")
+        XCTAssertNil(client.lastRequest, "neither mode should call the LLM")
+    }
+
     func testCleanupModeAppliesLocalRulesWithoutTheLLM() async throws {
         let client = RecordingClient()
         let result = try await runner(client: client)
