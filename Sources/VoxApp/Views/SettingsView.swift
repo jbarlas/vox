@@ -4,26 +4,66 @@ import SwiftUI
 import VoxCore
 import VoxKit
 
+/// System-Settings-style layout: a fixed sidebar listing every section
+/// (grouped per `SettingsSection.Group`) and a detail pane for the selected
+/// one. Unlike a `TabView`, a sidebar list scrolls instead of silently folding
+/// overflow tabs into a "»" menu, so adding a section is just a new
+/// `SettingsSection` case plus a `detail` arm.
 struct SettingsView: View {
     @ObservedObject var state: AppState
+    // Persisted by identifier so the window reopens on the last section
+    // across launches; `resolve` tolerates a stale value.
+    @AppStorage("settings.section") private var storedSection = SettingsSection.initial.rawValue
+    // `.all` and never anything else: the sidebar is the only way to reach a
+    // section, so it must not be collapsible.
+    @State private var columnVisibility = NavigationSplitViewVisibility.all
 
     var body: some View {
-        TabView {
-            GeneralSettings(state: state)
-                .tabItem { Label("General", systemImage: "gearshape") }
-            VocabularySettings(state: state)
-                .tabItem { Label("Vocabulary", systemImage: "text.book.closed") }
-            ModesSettings(state: state)
-                .tabItem { Label("Modes", systemImage: "wand.and.stars") }
-            LLMSettings(state: state)
-                .tabItem { Label("LLM", systemImage: "cloud") }
-            OutputSettings(state: state)
-                .tabItem { Label("Output", systemImage: "doc.on.clipboard") }
-            FeedbackSettings(state: state)
-                .tabItem { Label("Feedback", systemImage: "speaker.wave.2") }
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            List(selection: selection) {
+                ForEach(SettingsSection.Group.allCases) { group in
+                    Section(group.title) {
+                        ForEach(group.sections) { section in
+                            Label(section.title, systemImage: section.systemImage)
+                                .tag(section)
+                        }
+                    }
+                }
+            }
+            .listStyle(.sidebar)
+            .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 240)
+        } detail: {
+            detail(for: selection.wrappedValue)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(16)
         }
-        .padding(16)
-        .frame(minWidth: 600, minHeight: 440)
+        .onChange(of: columnVisibility) { visibility in
+            if visibility != .all { columnVisibility = .all }
+        }
+        .frame(minWidth: 720, minHeight: 480)
+    }
+
+    /// `List(selection:)` wants an optional and clears it on some deselect
+    /// gestures; a section is always shown, so `nil` keeps the current one.
+    private var selection: Binding<SettingsSection?> {
+        Binding(
+            get: { SettingsSection.resolve(storedSection) },
+            set: { newValue in
+                if let newValue { storedSection = newValue.rawValue }
+            }
+        )
+    }
+
+    @ViewBuilder
+    private func detail(for section: SettingsSection?) -> some View {
+        switch section ?? .initial {
+        case .general: GeneralSettings(state: state)
+        case .vocabulary: VocabularySettings(state: state)
+        case .feedback: FeedbackSettings(state: state)
+        case .modes: ModesSettings(state: state)
+        case .llm: LLMSettings(state: state)
+        case .output: OutputSettings(state: state)
+        }
     }
 }
 
@@ -69,6 +109,8 @@ private struct GeneralSettings: View {
                     Text("Toggle").tag(HotkeyConfig.Activation.toggle)
                 }
             }
+
+            MicrophoneSection(state: state)
 
             Section("Recording") {
                 LabeledContent("Max duration") {
@@ -190,6 +232,127 @@ private struct GeneralSettings: View {
                 state.save { $0[keyPath: keyPath] = newValue }
             }
         )
+    }
+}
+
+/// Picks `recording.input_device_uid` from the inputs CoreAudio currently
+/// lists, refreshed live as devices connect and the defaults change.
+private struct MicrophoneSection: View {
+    @ObservedObject var state: AppState
+    @StateObject private var devices = DeviceList()
+
+    /// Tag for "follow the system default", which `inputDeviceUID` stores as nil.
+    private static let systemDefaultTag = ""
+
+    var body: some View {
+        Section("Microphone") {
+            Picker("Input", selection: inputBinding) {
+                Text("System default (\(devices.defaultInputName ?? "none"))")
+                    .tag(Self.systemDefaultTag)
+                ForEach(devices.inputs, id: \.uid) { device in
+                    Text(device.name).tag(device.uid)
+                }
+                if let configured = state.config.recording.inputDeviceUID,
+                    !devices.inputs.contains(where: { $0.uid == configured })
+                {
+                    Text("\(configured) (not connected)").tag(configured)
+                }
+            }
+            if state.config.recording.inputDeviceUID == nil {
+                Toggle(
+                    "Use the built-in mic instead of Bluetooth headphones",
+                    isOn: preferBuiltInBinding
+                )
+                Text(
+                    "Recording from a Bluetooth headset's mic switches it to a low quality "
+                        + "call mode, which interrupts anything playing through it. Ignored "
+                        + "while the lid is closed."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            LabeledContent("Next recording uses") {
+                Text(devices.nextRecordingName)
+            }
+            .help("Based on the devices connected now. Checked again when each recording starts.")
+        }
+        .onAppear { devices.update(recording: state.config.recording) }
+        .onChange(of: state.config.recording) { devices.update(recording: $0) }
+    }
+
+    private var inputBinding: Binding<String> {
+        Binding(
+            get: { state.config.recording.inputDeviceUID ?? Self.systemDefaultTag },
+            set: { newValue in
+                state.save {
+                    $0.recording.inputDeviceUID = newValue == Self.systemDefaultTag ? nil : newValue
+                }
+            }
+        )
+    }
+
+    private var preferBuiltInBinding: Binding<Bool> {
+        Binding(
+            get: { state.config.recording.preferBuiltInMicOverBluetooth },
+            set: { newValue in state.save { $0.recording.preferBuiltInMic = newValue } }
+        )
+    }
+}
+
+/// The current inputs and the choice the next recording would make, kept on
+/// the main actor so the view reads stored values instead of querying the HAL
+/// on every redraw.
+@MainActor
+private final class DeviceList: ObservableObject {
+    @Published private(set) var inputs: [AudioDeviceInfo] = []
+    @Published private(set) var defaultInputUID: String?
+    @Published private(set) var nextRecordingName = ""
+    private var snapshot: AudioSnapshot?
+    private var recording = RecordingConfig.default
+    private var observer: AudioDevices.ChangeObserver?
+    private var screenObserver: NSObjectProtocol?
+
+    init() {
+        reload()
+        observer = AudioDevices.observeChanges { [weak self] in
+            MainActor.assumeIsolated { self?.reload() }
+        }
+        // Closing or opening a MacBook lid changes the displays but not the
+        // audio devices, and it decides whether the built-in mic is usable.
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reload() }
+        }
+    }
+
+    deinit {
+        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
+    }
+
+    var defaultInputName: String? {
+        inputs.first { $0.uid == defaultInputUID }?.name
+    }
+
+    func update(recording: RecordingConfig) {
+        self.recording = recording
+        recompute()
+    }
+
+    private func reload() {
+        let snapshot = AudioDevices.snapshot()
+        self.snapshot = snapshot
+        inputs = snapshot.devices.filter(\.hasInput)
+        defaultInputUID = snapshot.defaultInputUID
+        recompute()
+    }
+
+    private func recompute() {
+        guard let snapshot else { return }
+        let choice = InputDeviceSelection.choose(config: recording, snapshot: snapshot)
+        let uid = AudioDevices.effectiveInputUID(for: choice, defaultInputUID: snapshot.defaultInputUID)
+        let name = snapshot.device(uid)?.name ?? uid ?? "none"
+        nextRecordingName = choice.reason == .builtInOverBluetooth ? "\(name) (avoiding Bluetooth)" : name
     }
 }
 
@@ -354,7 +517,7 @@ private struct VocabularySettings: View {
             }
 
             Divider()
-            CorpusVocabularySection()
+            CorpusVocabularySection(corpus: $seeded)
         }
         .onAppear {
             text = state.config.vocabulary.joined(separator: "\n")
@@ -381,7 +544,7 @@ private struct VocabularySettings: View {
 /// one can add/remove a folder and the other sees it next time it loads.
 /// `VoxPaths()` resolves the same $VOX_HOME/default location both use.
 private struct CorpusVocabularySection: View {
-    @State private var corpus: CorpusVocabulary?
+    @Binding var corpus: CorpusVocabulary?
     @State private var isSyncing = false
     @State private var error: String?
 
@@ -407,74 +570,85 @@ private struct CorpusVocabularySection: View {
             }
 
             if let corpus, !corpus.sources.isEmpty {
-                VStack(spacing: 0) {
-                    ForEach(corpus.sources, id: \.path) { source in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(source.isNotion ? "Notion workspace" : source.path)
+                DisclosureGroup {
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            ForEach(corpus.sources, id: \.path) { source in
+                                HStack {
+                                    Text(source.isNotion ? "Notion workspace" : source.path)
+                                        .font(.caption)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                        .help("\(source.path)\nAdded \(source.addedAt.formatted(date: .abbreviated, time: .shortened))")
+                                    if corpus.missingSources.contains(source.path) {
+                                        Image(systemName: "exclamationmark.triangle")
+                                            .foregroundStyle(.orange)
+                                            .help("Not found at last sync; skipped")
+                                            .accessibilityLabel("Missing source")
+                                    }
+                                    Spacer()
+                                    if !source.isNotion {
+                                        Button {
+                                            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: source.path)])
+                                        } label: {
+                                            Image(systemName: "folder")
+                                        }
+                                        .buttonStyle(.borderless)
+                                        .help("Show in Finder")
+                                    }
+                                    Button {
+                                        source.isNotion ? disconnectNotion() : removeSource(source.path)
+                                    } label: {
+                                        Image(systemName: "minus.circle")
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .help(source.isNotion ? "Disconnect Notion and delete its cached pages" : "Stop tracking this folder")
+                                    .disabled(isSyncing)
+                                }
+                                .padding(.vertical, 2)
+                                Divider()
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 112)
+
+                    Text(
+                        "\(corpus.activeTerms.count) terms from \(corpus.filesScanned) files, last synced "
+                            + corpus.generatedAt.formatted(date: .abbreviated, time: .shortened)
+                    )
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+
+                    if corpus.activeTerms.isEmpty {
+                        Text("No distinctive terms found in these sources yet.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        List(corpus.activeTerms, id: \.term) { term in
+                            HStack {
+                                Text(term.term)
+                                Spacer()
+                                Text(String(format: "%.1f", term.score))
                                     .font(.caption)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                if corpus.missingSources.contains(source.path) {
-                                    Text("Not found at last sync; skipped")
-                                        .font(.caption2)
-                                        .foregroundStyle(.orange)
-                                } else {
-                                    Text("Added \(source.addedAt.formatted(date: .abbreviated, time: .shortened))")
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                }
+                                    .foregroundStyle(.secondary)
                             }
-                            Spacer()
-                            if !source.isNotion {
-                                Button {
-                                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: source.path)])
-                                } label: {
-                                    Image(systemName: "folder")
-                                }
-                                .buttonStyle(.borderless)
-                                .help("Show in Finder")
-                            }
-                            Button {
-                                source.isNotion ? disconnectNotion() : removeSource(source.path)
-                            } label: {
-                                Image(systemName: "minus.circle")
-                            }
-                            .buttonStyle(.borderless)
-                            .help(source.isNotion ? "Disconnect Notion and delete its cached pages" : "Stop tracking this folder")
-                            .disabled(isSyncing)
                         }
-                        .padding(.vertical, 2)
-                        Divider()
+                        .frame(minHeight: 60, maxHeight: 100)
                     }
-                }
-
-                Text(
-                    "\(corpus.activeTerms.count) terms from \(corpus.filesScanned) files, last synced "
-                        + corpus.generatedAt.formatted(date: .abbreviated, time: .shortened)
-                )
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-
-                if corpus.activeTerms.isEmpty {
-                    Text("No distinctive terms found in these folders yet.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    List(corpus.activeTerms, id: \.term) { term in
-                        HStack {
-                            Text(term.term)
-                            Spacer()
-                            Text(String(format: "%.1f", term.score))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                } label: {
+                    HStack {
+                        Text("\(corpus.sources.count) \(corpus.sources.count == 1 ? "source" : "sources") · \(corpus.activeTerms.count) terms")
+                        if !corpus.missingSources.isEmpty {
+                            Label("\(corpus.missingSources.count) missing", systemImage: "exclamationmark.triangle")
+                                .foregroundStyle(.orange)
+                                .help("Expand to see which folders were missing at the last sync.")
                         }
                     }
-                    .frame(minHeight: 80, maxHeight: 140)
+                    .font(.caption)
                 }
             } else {
                 Text(
-                    "No folders tracked yet. Add one of your notes folders to bias whisper.cpp "
+                    "No sources tracked yet. Add a notes folder or connect Notion to bias whisper.cpp "
                         + "and LLM modes toward its project names and jargon."
                 )
                 .font(.caption)

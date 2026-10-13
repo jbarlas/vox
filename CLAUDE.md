@@ -34,12 +34,26 @@ coverage — verify changes there by actually running the CLI or the app.
   pipeline) picks up an external edit — that still only happens on launch or
   an explicit save. After editing `config.json` via the CLI while testing,
   kill and relaunch the app to be sure it's using what you just wrote:
-  `pkill -f Vox.app/Contents/MacOS/Vox; open dist/Vox.app`. There's no
-  auto-reload and no auto-restart.
+  ```bash
+  pkill -u "$(id -u)" -f '/Vox.app/Contents/MacOS/Vox$'
+  while pgrep -u "$(id -u)" -f '/Vox.app/Contents/MacOS/Vox$' >/dev/null; do sleep 0.2; done
+  open dist/Vox.app
+  ```
+  Quitting waits for any active dictation and its output delivery; a returned
+  `pkill` does not mean Vox has exited. There's no auto-reload or auto-restart.
 
 - **`dist/Vox.app` never updates itself.** `make app` only rewrites the file
   on disk; a running instance keeps running the old binary. Always kill and
   reopen after rebuilding if you need to see a change take effect.
+
+- **Ad-hoc signing does not preserve app privacy grants across changed
+  builds.** Use the same `CODE_SIGN_IDENTITY` certificate (or `DEVELOPER_ID`
+  for distribution) for repeated builds. `vox update` checks both apps'
+  designated requirements before installing and requires
+  `--allow-permission-reset` for an identity change, including migration
+  from ad-hoc signing to a certificate. Regrant Microphone and Accessibility
+  permissions after that one-time migration. `APP_BUNDLE` selects the bundle
+  for `make app`, `make sign`, and `make notarize` alike.
 
 - **The default macOS volume format (APFS) is case-insensitive.**
   `scripts/bundle-app.sh` names the CLI it embeds `Contents/MacOS/vox-cli`,
