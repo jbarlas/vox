@@ -217,7 +217,16 @@ struct Modes: AsyncParsableCommand {
                 } else {
                     input = text
                 }
-                let result = try await ModeRunner(llmConfig: config.llm).run(transcript: input, mode: mode)
+                // Same glossary the pipeline sends, so the test reflects a real dictation.
+                let vocabulary = VocabularyEntry.merge(
+                    user: config.vocabulary,
+                    corpus: CorpusVocabularyStore(paths: configOptions.paths).loadForInference()
+                )
+                let result = try await ModeRunner(llmConfig: config.llm).run(
+                    transcript: input,
+                    mode: mode,
+                    vocabulary: vocabulary.map(\.term)
+                )
                 Stdout.write(result.text)
             } catch {
                 voxError(from: error).printToStderr()

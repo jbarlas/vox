@@ -200,7 +200,10 @@ struct ConfigCommand: AsyncParsableCommand {
                     try store.save(config)
                 }
                 if showPrompt {
-                    Stdout.write(VocabInjector.initialPrompt(vocabulary: config.vocabulary) ?? "(no prompt)")
+                    // What whisper.cpp actually receives: user terms plus seeded ones.
+                    let seeded = CorpusVocabularyStore(paths: configOptions.paths).loadForInference()
+                    let entries = VocabularyEntry.merge(user: config.vocabulary, corpus: seeded)
+                    Stdout.write(VocabInjector.initialPrompt(entries: entries) ?? "(no prompt)")
                 } else {
                     for term in config.vocabulary { Stdout.write(term) }
                 }

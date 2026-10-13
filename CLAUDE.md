@@ -92,3 +92,29 @@ coverage — verify changes there by actually running the CLI or the app.
   `RecordResult.modeError` set, rather than losing the already-successful
   transcription. Preserve this if you touch that code path — don't let a
   mode/LLM failure bubble up and discard a good transcript.
+
+- **Seeding from a folder only scans `.md`/`.txt`. Anything wider needs
+  its own gate, not just a bigger extension set.** `CMakeLists.txt` matches
+  `.txt` and is pure build syntax; `CorpusVocabularyExtractor.textFiles`
+  skips it by name and skips `vendor`/`node_modules`/`Pods`/`DerivedData`
+  directories outright so seeding a project root doesn't pull a vendored
+  dependency's docs in as "vocabulary." That list is deliberately narrow:
+  `build`/`dist`/`target` were tried and dropped, since all three are plausible
+  names for a person's own notes folder ("PC build," "Q3 targets"), and a
+  wrongly-skipped real folder is worse than an occasional missed build
+  directory. If code files (`.swift`, `.py`, ...) are ever added to
+  `supportedExtensions`, they need a per-language keyword denylist first.
+  `initial_prompt` biasing can't tell "a variable name the user might
+  dictate" from "a language keyword that shows up in every file of that
+  type" (`if`, `elif`, `STREQUAL`), and the latter will otherwise dominate
+  the term list purely on frequency.
+
+- **`initial_prompt` is a soft bias, not a hard constraint.** A seeded
+  "Lightswitch" can still come back from whisper.cpp as "light switch",
+  because the model's prior for two common words beats the prompt's nudge.
+  Only `.llm` modes repair this: `ModeRunner.systemPrompt`'s glossary hint
+  tells the model to use sentence context before joining words, which is the
+  only way to tell "push back the launch" from "the Pushback doc". `.raw`,
+  `.cleanup` and the LLM-failure fallback never rewrite vocabulary. A
+  context-free rejoin (`VocabCorrector`) was tried and removed: it turned
+  ordinary speech into seeded proper nouns.
