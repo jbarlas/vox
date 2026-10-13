@@ -37,6 +37,8 @@ public struct VoxPaths: Sendable {
     public var vocabularyDirectory: URL { supportDirectory.appendingPathComponent("vocab", isDirectory: true) }
     /// Output of `vox vocab seed`; see `CorpusVocabulary`.
     public var corpusVocabularyFile: URL { vocabularyDirectory.appendingPathComponent("corpus.json") }
+    /// Notion pages mirrored as Markdown for the extractor; see `NotionSyncer`.
+    public var notionCacheDirectory: URL { vocabularyDirectory.appendingPathComponent("notion", isDirectory: true) }
 
     /// Sidecar files `FileLock` locks, next to the documents they guard. They
     /// are never read or written — only `flock`ed — so they stay empty.
