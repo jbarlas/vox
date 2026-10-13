@@ -176,7 +176,7 @@ public struct NotionSyncer {
                 page["archived"] as? Bool != true,
                 page["in_trash"] as? Bool != true
             else { continue }
-            let file = fileURL(for: id)
+            let file = try fileURL(for: id)
             let title = NotionMarkdown.title(of: page)
 
             if let cached = previous.pages[id], cached.lastEditedTime == lastEdited,
@@ -188,7 +188,20 @@ public struct NotionSyncer {
                 continue
             }
 
-            guard let body = try await blockLines(of: id, depth: 0) else {
+            let body: [String]
+            do {
+                guard let fetched = try await blockLines(of: id, depth: 0) else {
+                    report.pagesSkipped += 1
+                    continue
+                }
+                body = fetched
+            } catch SyncError.incompletePage {
+                // Keep the previous complete document, but force a retry even
+                // if Notion returns the same last_edited_time next time.
+                if var cached = previous.pages[id] {
+                    cached.lastEditedTime = ""
+                    index.pages[id] = cached
+                }
                 report.pagesSkipped += 1
                 continue
             }
@@ -213,13 +226,17 @@ public struct NotionSyncer {
         return report
     }
 
-    /// `nil` when the page itself is no longer visible.
+    private enum SyncError: Error { case incompletePage }
+
+    /// `nil` when the page itself is no longer visible; nested or paginated
+    /// failures must not replace a complete cached document with partial text.
     private func blockLines(of blockID: String, depth: Int) async throws -> [String]? {
         var lines: [String] = []
         var cursor: String?
         repeat {
             guard let page = try await client.blockChildren(of: blockID, startCursor: cursor) else {
-                return depth == 0 ? nil : lines
+                if depth == 0 && cursor == nil { return nil }
+                throw SyncError.incompletePage
             }
             for block in page.results {
                 if let line = NotionMarkdown.line(for: block) { lines.append(line) }
@@ -240,9 +257,16 @@ public struct NotionSyncer {
         return edited >= syncedAt.addingTimeInterval(-Self.recentWindow)
     }
 
-    func fileURL(for pageID: String) -> URL {
-        let safe = pageID.filter { $0.isLetter || $0.isNumber || $0 == "-" }
-        return cacheDirectory.appendingPathComponent("\(safe).md")
+    func fileURL(for pageID: String) throws -> URL {
+        // Keep filename bytes in an explicit ASCII allowlist. Rejecting
+        // invalid IDs also avoids collisions from lossy sanitization.
+        guard !pageID.isEmpty, pageID.utf8.count <= 64,
+            pageID.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0)
+                || (97...122).contains($0) || $0 == 45 })
+        else {
+            throw VoxError.config("Notion returned an invalid page ID")
+        }
+        return cacheDirectory.appendingPathComponent("\(pageID).md")
     }
 
     /// The cache holds company documents in plain text: owner-only access.

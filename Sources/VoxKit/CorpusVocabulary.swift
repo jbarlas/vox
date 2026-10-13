@@ -400,7 +400,9 @@ public final class CorpusVocabularyStore {
             let files = try CorpusVocabularyExtractor.textFiles(
                 under: present.map { URL(fileURLWithPath: $0.path) }
             )
-            guard !files.isEmpty else {
+            // An empty Notion workspace is valid after its final page is
+            // unshared. Persist zero terms while retaining the connection.
+            guard !files.isEmpty || present.contains(where: \.isNotion) else {
                 throw VoxError.config(
                     "No .md or .txt files found under: \(present.map(\.path).joined(separator: ", "))"
                 )

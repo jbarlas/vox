@@ -13,6 +13,8 @@ private final class StubTransport: NotionTransport, @unchecked Sendable {
 
     private let lock = NSLock()
     private var _requests: [URLRequest] = []
+    private var _started: [ContinuousClock.Instant] = []
+    var started: [ContinuousClock.Instant] { lock.withLock { _started } }
     var route: (_ method: String, _ path: String, _ body: [String: Any]?) -> Reply
 
     init(route: @escaping (_ method: String, _ path: String, _ body: [String: Any]?) -> Reply) {
@@ -31,7 +33,10 @@ private final class StubTransport: NotionTransport, @unchecked Sendable {
     }
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        lock.withLock { _requests.append(request) }
+        lock.withLock {
+            _requests.append(request)
+            _started.append(ContinuousClock().now)
+        }
         let url = request.url!
         var path = url.path.replacingOccurrences(of: "/v1/", with: "")
         if let query = url.query { path += "?\(query)" }
@@ -393,5 +398,109 @@ final class NotionVocabularyTests: XCTestCase {
     func testISO8601ParsesNotionTimestamps() {
         XCTAssertNotNil(ISO8601.date(from: "2026-10-05T12:34:00.000Z"))
         XCTAssertNotNil(ISO8601.date(from: "2026-10-05T12:34:00Z"))
+    }
+
+    func testEmptyWorkspaceClearsTermsAndCanSyncAgain() async throws {
+        let store = CorpusVocabularyStore(paths: paths)
+        try await NotionVocabulary.connect(store: store, environment: ["NOTION_TOKEN": "t"], transport: notionWorkspace())
+        let empty = StubTransport { _, _, _ in .init(json: list([])) }
+        let result = try await NotionVocabulary.refresh(store: store, environment: ["NOTION_TOKEN": "t"], transport: empty)
+        XCTAssertEqual(result.notion?.pagesRemoved, 1)
+        XCTAssertEqual(result.vocabulary?.terms, [])
+        XCTAssertEqual(result.vocabulary?.filesScanned, 0)
+        XCTAssertEqual(try store.load()?.sources.map(\.isNotion), [true])
+        XCTAssertEqual(store.loadForInference()?.terms, [])
+        let restored = try await NotionVocabulary.refresh(
+            store: store, environment: ["NOTION_TOKEN": "t"], transport: notionWorkspace()
+        )
+        XCTAssertTrue(restored.vocabulary?.terms.contains { $0.term == "Zorblatt" } == true)
+    }
+
+    func testInitiallyEmptyWorkspaceConnectsButEmptyFolderStillFails() async throws {
+        let store = CorpusVocabularyStore(paths: paths)
+        let empty = StubTransport { _, _, _ in .init(json: list([])) }
+        let (vocabulary, _) = try await NotionVocabulary.connect(
+            store: store, environment: ["NOTION_TOKEN": "t"], transport: empty
+        )
+        XCTAssertTrue(vocabulary.terms.isEmpty)
+        XCTAssertEqual(vocabulary.sources.map(\.isNotion), [true])
+        try store.untrackNotion()
+        let folder = root.appendingPathComponent("empty")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        XCTAssertThrowsError(try store.replaceSources([folder.path], options: .default))
+    }
+
+    func testNested404PreservesCacheAndRetriesUnchangedTimestamp() async throws {
+        var phase = 0
+        let transport = StubTransport { method, path, _ in
+            if method == "POST" {
+                return .init(json: list([page("p1", title: "Zorblatt",
+                    edited: phase == 0 ? "2020-01-01T00:00:00.000Z" : "2021-01-01T00:00:00.000Z")]))
+            }
+            if path.hasPrefix("blocks/p1/") {
+                return .init(json: list([block("toggle", "Parent", id: "child", children: true)]))
+            }
+            if phase == 1 { return .init(status: 404) }
+            return .init(json: list([block("paragraph", phase == 0 ? "Original complete" : "Recovered complete")]))
+        }
+        try await syncer(transport).sync()
+        let original = try cached("p1")
+        phase = 1
+        let partial = try await syncer(transport).sync()
+        XCTAssertEqual(partial.pagesSkipped, 1)
+        XCTAssertEqual(partial.pagesRemoved, 0)
+        XCTAssertEqual(try cached("p1"), original)
+        phase = 2
+        let recovered = try await syncer(transport).sync()
+        XCTAssertEqual(recovered.pagesFetched, 1)
+        XCTAssertTrue(try cached("p1").contains("Recovered complete"))
+    }
+
+    func testPageIDsRejectTraversalUnicodeAndCollisions() async throws {
+        let transport = StubTransport { _, _, _ in .init(json: list([])) }
+        let sync = syncer(transport)
+        for id in ["", "../outside", "a/b", "a.b", "\u{212A}", "\u{1FBE}", "a\u{0301}", String(repeating: "a", count: 65)] {
+            XCTAssertThrowsError(try sync.fileURL(for: id), id)
+        }
+        let id = UUID().uuidString.lowercased()
+        XCTAssertEqual(try sync.fileURL(for: id).lastPathComponent, "\(id).md")
+        let invalid = StubTransport { _, _, _ in .init(json: list([page("../outside", title: "Unsafe")])) }
+        do {
+            try await syncer(invalid).sync()
+            XCTFail("invalid search IDs must fail before any block request or cache write")
+        } catch {}
+        XCTAssertEqual(invalid.requests.count, 1)
+    }
+
+    func testConcurrentRequestsRemainSpaced() async throws {
+        let transport = StubTransport { _, _, _ in .init(json: list([])) }
+        let client = NotionClient(token: "t", tokenEnvVar: "NOTION_TOKEN", transport: transport,
+                                  minimumInterval: .milliseconds(40))
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for _ in 0..<5 { group.addTask { _ = try await client.searchPages(startCursor: nil) } }
+            try await group.waitForAll()
+        }
+        let starts = transport.started
+        XCTAssertEqual(starts.count, 5)
+        for (a, b) in zip(starts, starts.dropFirst()) {
+            XCTAssertGreaterThanOrEqual(b - a, .milliseconds(35))
+        }
+    }
+
+    func testConcurrentRequestsRespectRetryAfter() async throws {
+        var calls = 0
+        let transport = StubTransport { _, _, _ in
+            calls += 1
+            return calls == 1 ? .init(status: 429, headers: ["Retry-After": "0.12"]) : .init(json: list([]))
+        }
+        let client = NotionClient(token: "t", tokenEnvVar: "NOTION_TOKEN", transport: transport,
+                                  minimumInterval: .milliseconds(20))
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for _ in 0..<3 { group.addTask { _ = try await client.searchPages(startCursor: nil) } }
+            try await group.waitForAll()
+        }
+        let starts = transport.started
+        XCTAssertEqual(starts.count, 4)
+        XCTAssertGreaterThanOrEqual(starts[1] - starts[0], .milliseconds(115))
     }
 }

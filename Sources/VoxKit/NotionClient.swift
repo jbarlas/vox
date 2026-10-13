@@ -48,6 +48,8 @@ public actor NotionClient {
     private let maxRetries: Int
     private let sleep: @Sendable (Duration) async throws -> Void
     private var lastRequestStarted: ContinuousClock.Instant?
+    private var requestInFlight = false
+    private var waitingRequests: [CheckedContinuation<Void, Never>] = []
     private(set) var requestCount = 0
 
     public init(
@@ -103,6 +105,12 @@ public actor NotionClient {
     }
 
     private func request(_ method: String, path: String, body: NotionObject?) async throws -> NotionObject {
+        // Actor methods re-enter at every await. Hold the request slot through
+        // throttling and retries so concurrent callers cannot share a deadline
+        // or send another request during Retry-After.
+        await acquireRequest()
+        defer { releaseRequest() }
+        try Task.checkCancellation()
         guard let url = URL(string: path, relativeTo: baseURL) else {
             throw VoxError.config("Invalid Notion request path: \(path)")
         }
@@ -161,6 +169,22 @@ public actor NotionClient {
             if wait > .zero { try await sleep(wait) }
         }
         lastRequestStarted = clock.now
+    }
+
+    private func acquireRequest() async {
+        if requestInFlight {
+            await withCheckedContinuation { waitingRequests.append($0) }
+        } else {
+            requestInFlight = true
+        }
+    }
+
+    private func releaseRequest() {
+        if waitingRequests.isEmpty {
+            requestInFlight = false
+        } else {
+            waitingRequests.removeFirst().resume()
+        }
     }
 
     /// `Retry-After` when Notion sends it (429), otherwise exponential backoff.
