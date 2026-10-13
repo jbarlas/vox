@@ -17,6 +17,7 @@ public enum ConfigKeys {
         "recording.silence_timeout_seconds",
         "recording.silence_threshold_db",
         "recording.input_device_uid",
+        "recording.prefer_built_in_mic",
         "output.destination",
         "output.keep_session_history",
         "output.session_history_limit",
@@ -51,6 +52,7 @@ public enum ConfigKeys {
             return config.recording.silenceTimeoutSeconds.map { String($0) } ?? "off"
         case "recording.silence_threshold_db": return String(config.recording.silenceThresholdDB)
         case "recording.input_device_uid": return config.recording.inputDeviceUID ?? "default"
+        case "recording.prefer_built_in_mic": return String(config.recording.preferBuiltInMicOverBluetooth)
         case "output.destination": return config.output.destination.rawValue
         case "output.keep_session_history": return String(config.output.keepSessionHistory)
         case "output.session_history_limit":
@@ -110,6 +112,8 @@ public enum ConfigKeys {
             config.recording.silenceThresholdDB = try number(value, key)
         case "recording.input_device_uid":
             config.recording.inputDeviceUID = isUnset(value) ? nil : value
+        case "recording.prefer_built_in_mic":
+            config.recording.preferBuiltInMic = try bool(value, key)
         case "output.destination":
             guard let destination = OutputConfig.Destination(rawValue: value) else {
                 throw VoxError.config(

@@ -20,6 +20,9 @@
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
+	<!-- Lets the updater distinguish older apps that exit during dictation. -->
+	<key>VoxWaitsForDictationOnQuit</key>
+	<true/>
 	<!-- Menu bar only: no Dock icon, no app switcher entry. -->
 	<key>LSUIElement</key>
 	<true/>

@@ -38,7 +38,7 @@ final class AppState: ObservableObject {
     private let feedback: FeedbackPlayer
     private let overlay = RecordingOverlayController()
     private var pipeline: DictationPipeline?
-    private var currentTask: Task<Void, Never>?
+    private let dictationLifecycle = DictationLifecycle()
 
     init(paths: VoxPaths = VoxPaths()) {
         let store = ConfigStore(paths: paths)
@@ -156,8 +156,12 @@ final class AppState: ObservableObject {
 
     // MARK: - Dictation
 
+    func prepareToTerminate(whenReady: @escaping () -> Void) -> Bool {
+        dictationLifecycle.requestTermination(whenReady: whenReady)
+    }
+
     func startDictation(modeName: String? = nil) {
-        guard !status.isBusy else { return }
+        guard dictationLifecycle.canStart else { return }
         let startedAt = Date()
         let requestedMode = modeName ?? config.defaultMode
         let pipeline = DictationPipeline(config: config, paths: paths, engine: engine)
@@ -167,7 +171,7 @@ final class AppState: ObservableObject {
         feedback.playStart()
         if config.feedback.showOverlay { overlay.show() }
 
-        currentTask = Task { [weak self] in
+        dictationLifecycle.start { [weak self] in
             guard let self else { return }
             do {
                 let result = try await pipeline.run(
@@ -183,6 +187,7 @@ final class AppState: ObservableObject {
             } catch {
                 self.fail(with: error, startedAt: startedAt, mode: requestedMode)
             }
+            self.pipeline = nil
         }
     }
 
