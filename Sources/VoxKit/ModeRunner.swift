@@ -65,8 +65,15 @@ public struct ModeRunner: Sendable {
             )
             let client = try clientFactory(effective)
             let completion = try await client.complete(request)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            // A whitespace-only reply would otherwise "succeed" and replace
+            // a real transcript with nothing; failing here sends the caller
+            // down the raw-transcript fallback instead.
+            guard !completion.isEmpty else {
+                throw VoxError.llm(LLMFailureMessage.emptyResponse, detail: "The reply was only whitespace")
+            }
             return ModeResult(
-                text: completion.trimmingCharacters(in: .whitespacesAndNewlines),
+                text: completion,
                 mode: mode.name,
                 kind: .llm,
                 llmModel: effective.model

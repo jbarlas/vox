@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItemController = StatusItemController(state: state)
         installHotkey()
+        if HUDDemo.isEnabled { state.runHUDDemo() }
 
         // Ask for the microphone at launch rather than mid-dictation, where the
         // prompt would eat the first seconds of speech.

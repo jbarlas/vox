@@ -88,20 +88,20 @@ public struct LiteLLMClient: ChatCompletionClient {
             (data, response) = try await session.data(for: urlRequest)
         } catch let error as URLError where error.code == .timedOut {
             throw VoxError.llm(
-                "LLM endpoint at \(endpoint.absoluteString) didn't respond within \(Int(timeout))s",
+                LLMFailureMessage.timeout(endpoint: endpoint.absoluteString, seconds: timeout),
                 detail: "A local model that has to load from disk first can easily take longer than "
                     + "that on the first call after it goes idle. Raise llm.timeout_seconds, or keep "
                     + "the model warm (e.g. Ollama's keep_alive)."
             )
         } catch {
             throw VoxError.llm(
-                "Could not reach the LLM endpoint at \(endpoint.absoluteString)",
+                LLMFailureMessage.unreachable(endpoint: endpoint.absoluteString),
                 detail: "\(error.localizedDescription) — is the endpoint running?"
             )
         }
         if let httpResponse = response as? HTTPURLResponse, !(200..<300).contains(httpResponse.statusCode) {
             throw VoxError.llm(
-                "LLM endpoint returned HTTP \(httpResponse.statusCode)",
+                LLMFailureMessage.httpStatus(httpResponse.statusCode),
                 detail: String(data: data, encoding: .utf8)
             )
         }
@@ -140,13 +140,13 @@ public struct LiteLLMClient: ChatCompletionClient {
             decoded = try JSONDecoder().decode(Response.self, from: data)
         } catch {
             throw VoxError.llm(
-                "LLM response was not valid chat-completions JSON",
+                LLMFailureMessage.invalidResponse,
                 detail: String(data: data, encoding: .utf8)
             )
         }
         guard let content = decoded.choices?.first?.message?.content, !content.isEmpty else {
             throw VoxError.llm(
-                "LLM response contained no message content",
+                LLMFailureMessage.emptyResponse,
                 detail: String(data: data, encoding: .utf8)
             )
         }

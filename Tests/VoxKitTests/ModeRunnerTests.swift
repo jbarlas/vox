@@ -74,6 +74,19 @@ final class ModeRunnerTests: XCTestCase {
         XCTAssertNil(client.lastRequest)
     }
 
+    func testWhitespaceOnlyLLMReplyIsAnEmptyResponseError() async {
+        let client = RecordingClient()
+        client.response = "  \n "
+        do {
+            _ = try await runner(client: client).run(transcript: "hello", mode: .instructionPrompt)
+            XCTFail("a blank reply must not replace the transcript with nothing")
+        } catch let error as VoxError {
+            XCTAssertEqual(LLMFailureKind.classify(error), .emptyResponse)
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+    }
+
     func testLLMFailureSurfacesAsAnLLMError() async {
         let client = RecordingClient()
         client.error = VoxError.llm("connection refused")
