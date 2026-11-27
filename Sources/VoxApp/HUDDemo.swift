@@ -40,7 +40,7 @@ enum HUDDemo {
                     overlay.send(.transcriptionStarted)
                     await pause(0.7)
                     let refineStart = Date()
-                    overlay.send(.modeStarted(name: "prompt", usesLLM: true, model: "phi4-mini:3.8b-q8_0", at: refineStart))
+                    overlay.send(.llmRequestStarted(mode: "prompt", model: "phi4-mini:3.8b-q8_0", at: refineStart))
                     await pause(error == nil ? 2.1 : 2.6)
                     overlay.send(.delivered(Delivery(
                         destination: .clipboard,
@@ -102,7 +102,7 @@ enum HUDSnapshots {
                 overlay.send(.transcriptionStarted)
                 await pause(0.6)
                 capture("3-transcribing-\(suffix)")
-                overlay.send(.modeStarted(name: "prompt", usesLLM: true, model: "phi4-mini:3.8b-q8_0", at: Date().addingTimeInterval(-1.6)))
+                overlay.send(.llmRequestStarted(mode: "prompt", model: "phi4-mini:3.8b-q8_0", at: Date().addingTimeInterval(-1.6)))
                 await pause(0.6)
                 capture("4-llm-in-flight-\(suffix)")
                 overlay.send(.delivered(Delivery(destination: .clipboard, transcriptIsEmpty: false, mode: "prompt", usedLLM: true, modeElapsed: 2.21)))
@@ -118,7 +118,7 @@ enum HUDSnapshots {
                     overlay.begin()
                     overlay.send(.recordingStarted(at: Date()))
                     overlay.send(.transcriptionStarted)
-                    overlay.send(.modeStarted(name: "prompt", usesLLM: true, at: Date()))
+                    overlay.send(.llmRequestStarted(mode: "prompt", model: nil, at: Date()))
                     overlay.send(.delivered(Delivery(destination: .clipboard, transcriptIsEmpty: false, mode: "prompt", usedLLM: true, modeError: error, modeElapsed: elapsed)))
                     await pause(0.6)
                     capture("\(name)-\(suffix)")

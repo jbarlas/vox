@@ -74,6 +74,28 @@ final class ModeRunnerTests: XCTestCase {
         XCTAssertNil(client.lastRequest)
     }
 
+    func testOnRequestFiresOnlyWhenARequestIsActuallySent() async throws {
+        final class Box: @unchecked Sendable { var models: [String] = [] }
+        let client = RecordingClient()
+
+        let sent = Box()
+        _ = try await runner(client: client).run(transcript: "hello", mode: .instructionPrompt) { sent.models.append($0) }
+        XCTAssertEqual(sent.models, [LLMConfig.default.effective(for: .instructionPrompt).model])
+
+        let blank = Box()
+        _ = try await runner(client: client).run(transcript: "  ", mode: .instructionPrompt) { blank.models.append($0) }
+        XCTAssertEqual(blank.models, [], "a blank transcript never reaches the LLM")
+
+        let local = Box()
+        _ = try await runner(client: client).run(transcript: "hello", mode: .cleanup) { local.models.append($0) }
+        XCTAssertEqual(local.models, [])
+
+        let setupFailed = Box()
+        let failing = ModeRunner(llmConfig: .default, clientFactory: { _ in throw VoxError.llm("OPENAI_API_KEY is not set") })
+        _ = try? await failing.run(transcript: "hello", mode: .instructionPrompt) { setupFailed.models.append($0) }
+        XCTAssertEqual(setupFailed.models, [], "client setup failed before any request")
+    }
+
     func testWhitespaceOnlyLLMReplyIsAnEmptyResponseError() async {
         let client = RecordingClient()
         client.response = "  \n "

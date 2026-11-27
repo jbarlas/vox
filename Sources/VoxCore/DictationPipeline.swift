@@ -31,6 +31,10 @@ public final class DictationPipeline {
         case recording
         case transcribing
         case processingMode(String)
+        /// An LLM mode's request is actually being sent — after the blank-
+        /// transcript skip and the client's setup checks, either of which
+        /// can end the mode without any request.
+        case awaitingLLM(mode: String, model: String)
         case finished
     }
 
@@ -105,11 +109,13 @@ public final class DictationPipeline {
                     message: "Recording was stopped before the microphone opened"
                 )
             }
-            onStage?(.recording)
             let clock = Date()
             let output = try await capture.record(timeout: options.timeout) { event in
                 switch event {
                 case .level(let level): onLevel?(level)
+                // Only once the engine is running: a cue any earlier invites
+                // the user to start talking before anything is captured.
+                case .started: onStage?(.recording)
                 }
             }
             timings.recordingMs = Self.elapsedMs(since: clock)
@@ -142,7 +148,9 @@ public final class DictationPipeline {
         let modeResult: ModeResult
         let modeError: VoxError?
         do {
-            modeResult = try await modeRunner.run(transcript: transcription.text, mode: mode)
+            modeResult = try await modeRunner.run(transcript: transcription.text, mode: mode) { model in
+                onStage?(.awaitingLLM(mode: mode.name, model: model))
+            }
             modeError = nil
         } catch {
             modeResult = ModeResult(text: transcription.text, mode: mode.name, kind: mode.kind)

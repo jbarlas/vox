@@ -71,7 +71,10 @@ public enum HUDEvent: Equatable, Sendable {
     case began
     case recordingStarted(at: Date)
     case transcriptionStarted
-    case modeStarted(name: String, usesLLM: Bool, model: String? = nil, at: Date)
+    /// An LLM request is actually on the wire. Raw/cleanup modes, a blank
+    /// transcript, and a client that fails setup never send one, so they
+    /// never show the waiting phase.
+    case llmRequestStarted(mode: String, model: String?, at: Date)
     /// The result was handed to its destination. `modeError` set means the
     /// mode failed and the raw transcript was delivered instead.
     case delivered(Delivery)
@@ -115,7 +118,26 @@ public struct HUDStateMachine: Sendable {
 
     public init() {}
 
-    public mutating func send(_ event: HUDEvent) {
+    /// What the window layer must do beyond rendering the new phase.
+    public enum Effect: Equatable, Sendable {
+        case none
+        /// Place the panel on the screen the user is on now and bring it
+        /// in front — on every new dictation, including one started while the
+        /// previous result is still showing (possibly on another display).
+        case present
+        case hide
+    }
+
+    @discardableResult
+    public mutating func send(_ event: HUDEvent) -> Effect {
+        let previous = phase
+        apply(event)
+        if case .began = event { return .present }
+        if phase == .hidden, previous != .hidden { return .hide }
+        return .none
+    }
+
+    private mutating func apply(_ event: HUDEvent) {
         switch event {
         case .began:
             generation += 1
@@ -124,10 +146,7 @@ public struct HUDStateMachine: Sendable {
             advance(to: .recording(since: at))
         case .transcriptionStarted:
             advance(to: .transcribing)
-        case .modeStarted(let name, let usesLLM, let model, let at):
-            // A raw/cleanup mode is instantaneous: flashing a separate phase
-            // for it would only be noise.
-            guard usesLLM else { return }
+        case .llmRequestStarted(let name, let model, let at):
             advance(to: .refining(mode: name, model: model, since: at))
         case .delivered(let delivery):
             guard phase != .hidden else { return }
@@ -214,7 +233,12 @@ public struct HUDStateMachine: Sendable {
         let title: String
         switch error.code {
         case .microphone: title = "Microphone unavailable"
-        case .permission: title = "Microphone access needed"
+        // Both the microphone and auto-paste (Accessibility) report
+        // `.permission`; only the message says which.
+        case .permission:
+            title = error.message.localizedCaseInsensitiveContains("Accessibility")
+                ? "Accessibility access needed"
+                : "Microphone access needed"
         case .audio: title = "Audio problem"
         case .model: title = "Model unavailable"
         case .transcription: title = "Transcription failed"

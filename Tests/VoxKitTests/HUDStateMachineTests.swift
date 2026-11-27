@@ -9,7 +9,7 @@ final class HUDStateMachineTests: XCTestCase {
         machine.send(.began)
         machine.send(.recordingStarted(at: t0))
         machine.send(.transcriptionStarted)
-        machine.send(.modeStarted(name: "polish", usesLLM: true, model: "phi4-mini", at: t0.addingTimeInterval(3)))
+        machine.send(.llmRequestStarted(mode: "polish", model: "phi4-mini", at: t0.addingTimeInterval(3)))
     }
 
     func testLLMDictationWalksEveryPhase() {
@@ -21,7 +21,7 @@ final class HUDStateMachineTests: XCTestCase {
         XCTAssertEqual(machine.phase, .recording(since: t0))
         machine.send(.transcriptionStarted)
         XCTAssertEqual(machine.phase, .transcribing)
-        machine.send(.modeStarted(name: "polish", usesLLM: true, model: "phi4-mini", at: t0.addingTimeInterval(3)))
+        machine.send(.llmRequestStarted(mode: "polish", model: "phi4-mini", at: t0.addingTimeInterval(3)))
         XCTAssertEqual(machine.phase, .refining(mode: "polish", model: "phi4-mini", since: t0.addingTimeInterval(3)))
         machine.send(.delivered(Delivery(
             destination: .clipboard, transcriptIsEmpty: false, mode: "polish", usedLLM: true, modeElapsed: 1.84
@@ -37,7 +37,7 @@ final class HUDStateMachineTests: XCTestCase {
         machine.send(.began)
         machine.send(.recordingStarted(at: t0))
         machine.send(.transcriptionStarted)
-        machine.send(.modeStarted(name: "cleanup", usesLLM: false, at: t0))
+        // A raw/cleanup mode never sends a request, so no waiting phase.
         XCTAssertEqual(machine.phase, .transcribing)
         machine.send(.delivered(Delivery(destination: .autoPaste, transcriptIsEmpty: false, mode: "cleanup", usedLLM: false)))
         XCTAssertEqual(machine.phase, .succeeded(HUDOutcome(title: "Pasted")))
@@ -54,7 +54,7 @@ final class HUDStateMachineTests: XCTestCase {
 
         machine.send(.delivered(Delivery(destination: .clipboard, transcriptIsEmpty: false, mode: "polish", usedLLM: true)))
         let done = machine.phase
-        machine.send(.modeStarted(name: "polish", usesLLM: true, at: t0))
+        machine.send(.llmRequestStarted(mode: "polish", model: nil, at: t0))
         machine.send(.transcriptionStarted)
         XCTAssertEqual(machine.phase, done)
     }
@@ -79,6 +79,36 @@ final class HUDStateMachineTests: XCTestCase {
         // A dismiss for the current generation is still ignored mid-flight.
         machine.send(.dismissed(generation: machine.generation))
         XCTAssertEqual(machine.phase, .starting)
+    }
+
+    func testEveryNewDictationIsPresentedEvenOverAShowingResult() {
+        var machine = HUDStateMachine()
+        XCTAssertEqual(machine.send(.began), .present)
+        machine.send(.recordingStarted(at: t0))
+        machine.send(.delivered(Delivery(destination: .clipboard, transcriptIsEmpty: false, mode: "raw", usedLLM: false)))
+        // Restarted while "Copied" is still up — maybe from another display:
+        // the window layer must re-place the panel, not just re-render it.
+        XCTAssertEqual(machine.send(.began), .present)
+        XCTAssertEqual(machine.phase, .starting)
+        // Restarted while still starting: same phase, still re-presented.
+        XCTAssertEqual(machine.send(.began), .present)
+    }
+
+    func testHideEffectOnlyWhenLeavingAVisiblePhase() {
+        var machine = HUDStateMachine()
+        XCTAssertEqual(machine.send(.cancelled), .none)
+        machine.send(.began)
+        XCTAssertEqual(machine.send(.recordingStarted(at: t0)), .none)
+        XCTAssertEqual(machine.send(.cancelled), .hide)
+    }
+
+    func testPermissionFailureNamesTheRightPermission() {
+        // OutputRouter.paste's message when auto-paste is denied.
+        let paste = VoxError(code: .permission, message: "Auto-paste needs Accessibility permission")
+        XCTAssertEqual(HUDStateMachine.failure(for: paste).title, "Accessibility access needed")
+        // AudioCapture.record's message.
+        let mic = VoxError(code: .permission, message: "Microphone access was denied")
+        XCTAssertEqual(HUDStateMachine.failure(for: mic).title, "Microphone access needed")
     }
 
     func testCancelHidesImmediately() {

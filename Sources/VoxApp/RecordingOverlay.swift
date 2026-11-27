@@ -64,9 +64,9 @@ final class RecordingOverlayController {
 
     func send(_ event: HUDEvent) {
         let previous = machine.phase
-        machine.send(event)
+        let effect = machine.send(event)
         let phase = machine.phase
-        guard phase != previous else { return }
+        guard phase != previous || effect != .none else { return }
 
         if case .recording = phase { model.meter.meter.reset() }
         // Keep the last visible phase on screen while the panel fades out,
@@ -75,13 +75,13 @@ final class RecordingOverlayController {
 
         dismissTask?.cancel()
         dismissTask = nil
-        if phase == .hidden {
-            hidePanel()
-        } else {
-            if previous == .hidden { showPanel() }
-            if let delay = HUDStateMachine.autoDismissDelay(for: phase) {
-                scheduleDismiss(after: delay, generation: machine.generation)
-            }
+        switch effect {
+        case .present: showPanel()
+        case .hide: hidePanel()
+        case .none: break
+        }
+        if let delay = HUDStateMachine.autoDismissDelay(for: phase) {
+            scheduleDismiss(after: delay, generation: machine.generation)
         }
     }
 

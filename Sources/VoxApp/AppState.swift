@@ -220,17 +220,9 @@ final class AppState: ObservableObject {
                 feedback.playStop()
             }
             status = .processing
-            if case .processingMode(let name) = stage {
-                let mode = config.mode(named: name)
-                overlay.send(.modeStarted(
-                    name: name,
-                    usesLLM: mode?.kind == .llm,
-                    model: mode.map { config.llm.effective(for: $0).model },
-                    at: Date()
-                ))
-            } else {
-                overlay.send(.transcriptionStarted)
-            }
+            overlay.send(.transcriptionStarted)
+        case .awaitingLLM(let mode, let model):
+            overlay.send(.llmRequestStarted(mode: mode, model: model, at: Date()))
         case .finished:
             break
         }
