@@ -156,6 +156,14 @@ final class AppState: ObservableObject {
 
     // MARK: - Dictation
 
+    func runHUDDemo() {
+        if let directory = HUDSnapshots.directory {
+            HUDSnapshots.run(on: overlay, into: directory)
+        } else {
+            HUDDemo.run(on: overlay)
+        }
+    }
+
     func prepareToTerminate(whenReady: @escaping () -> Void) -> Bool {
         dictationLifecycle.requestTermination(whenReady: whenReady)
     }
@@ -169,7 +177,7 @@ final class AppState: ObservableObject {
         status = .recording
         inputLevelDB = -160
         feedback.playStart()
-        if config.feedback.showOverlay { overlay.show() }
+        if config.feedback.showOverlay { overlay.begin() }
 
         dictationLifecycle.start { [weak self] in
             guard let self else { return }
@@ -204,14 +212,17 @@ final class AppState: ObservableObject {
         switch stage {
         case .recording:
             status = .recording
+            overlay.send(.recordingStarted(at: Date()))
         case .transcribing, .processingMode:
             // The stop chime belongs here, not in `stopDictation()`: a
             // recording also ends on silence or the duration cap.
             if status != .processing {
                 feedback.playStop()
-                overlay.setProcessing(true)
             }
             status = .processing
+            overlay.send(.transcriptionStarted)
+        case .awaitingLLM(let mode, let model):
+            overlay.send(.llmRequestStarted(mode: mode, model: model, at: Date()))
         case .finished:
             break
         }
@@ -231,6 +242,14 @@ final class AppState: ObservableObject {
             }
             _ = try router.deliver(result: result, destination: destination)
             lastTranscript = result.transcript
+            overlay.send(.delivered(Delivery(
+                destination: destination,
+                transcriptIsEmpty: result.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                mode: result.mode,
+                usedLLM: result.modeKind == .llm,
+                modeError: result.modeError,
+                modeElapsed: Double(result.timings.modeMs) / 1000
+            )))
             if let modeError = result.modeError {
                 // Whisper still succeeded and its output was already
                 // delivered above (as `result.transcript`, filled in from the
@@ -245,19 +264,19 @@ final class AppState: ObservableObject {
             refreshHistory()
         } catch {
             status = .failed(voxMessage(for: error))
+            overlay.send(.failed(VoxError.wrap(error, code: .output, message: voxMessage(for: error))))
             feedback.playError()
         }
         inputLevelDB = -160
-        overlay.hide()
     }
 
     private func fail(with error: Error, startedAt: Date, mode: String) {
         inputLevelDB = -160
-        overlay.hide()
         // A hotkey tapped and released before the microphone opened is not a
         // failure worth chiming about, or logging.
         guard (error as? VoxError)?.code != .cancelled else {
             status = .idle
+            overlay.send(.cancelled)
             return
         }
         if config.output.keepSessionHistory {
@@ -268,6 +287,7 @@ final class AppState: ObservableObject {
             refreshHistory()
         }
         status = .failed(voxMessage(for: error))
+        overlay.send(.failed((error as? VoxError) ?? VoxError.wrap(error, code: .internalError, message: voxMessage(for: error))))
         feedback.playError()
     }
 

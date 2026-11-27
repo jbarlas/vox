@@ -33,7 +33,15 @@ public struct ModeRunner: Sendable {
         self.clientFactory = clientFactory
     }
 
-    public func run(transcript: String, mode: ModeDefinition) async throws -> ModeResult {
+    /// `onRequest` fires with the model name immediately before an LLM
+    /// request is sent — never for raw/cleanup modes, a blank transcript, or
+    /// a client that fails its setup checks — so a UI can show "waiting for
+    /// the LLM" only while one actually is.
+    public func run(
+        transcript: String,
+        mode: ModeDefinition,
+        onRequest: (@Sendable (String) -> Void)? = nil
+    ) async throws -> ModeResult {
         try mode.validate()
         let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -64,9 +72,17 @@ public struct ModeRunner: Sendable {
                 maxOutputTokens: effective.maxOutputTokens
             )
             let client = try clientFactory(effective)
+            onRequest?(effective.model)
             let completion = try await client.complete(request)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            // A whitespace-only reply would otherwise "succeed" and replace
+            // a real transcript with nothing; failing here sends the caller
+            // down the raw-transcript fallback instead.
+            guard !completion.isEmpty else {
+                throw VoxError.llm(LLMFailureMessage.emptyResponse, detail: "The reply was only whitespace")
+            }
             return ModeResult(
-                text: completion.trimmingCharacters(in: .whitespacesAndNewlines),
+                text: completion,
                 mode: mode.name,
                 kind: .llm,
                 llmModel: effective.model

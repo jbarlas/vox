@@ -115,8 +115,15 @@ same key/modifiers are settable directly with `vox config set hotkey.key_code`
 and `vox config set hotkey.modifiers`. It is registered through Carbon's
 `RegisterEventHotKey`, so it needs no Accessibility permission.
 
-While recording, a click-through waveform strip floats under the menu bar (on
-whichever screen the pointer is on), and stock macOS sounds mark four events:
+A click-through HUD floats under the menu bar (on whichever screen the pointer
+is on — or at the bottom of the screen if the pointer or text caret is where
+it would go) and follows the whole dictation: a live waveform while recording,
+"Transcribing…", "Waiting for LLM…" with the mode, model and elapsed time for
+LLM modes, then a brief "Copied"/"Pasted" check — or, if the LLM step failed,
+what went wrong (unreachable, timed out, empty reply, HTTP error) plus a note
+that the raw transcript was delivered instead. It respects Reduce Motion.
+`VOX_HUD_DEMO=1 dist/Vox.app/Contents/MacOS/Vox` loops it through every phase
+without a microphone or LLM. Stock macOS sounds mark four events:
 recording started, recording stopped, dictation finished, and failure. The
 overlay and each sound are configurable in Settings → Feedback, or under
 `feedback.*` via `vox config set`.

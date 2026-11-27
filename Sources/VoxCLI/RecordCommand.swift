@@ -184,6 +184,8 @@ struct RecordRunner {
                 Stderr.write("Transcribing…")
             case .processingMode(let mode):
                 Stderr.write("Applying mode '\(mode)'…")
+            case .awaitingLLM(_, let model):
+                Stderr.write("Waiting for \(model)…")
             case .finished:
                 break
             }

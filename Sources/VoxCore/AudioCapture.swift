@@ -17,6 +17,8 @@ public final class AudioCapture: NSObject {
     public enum Event: Sendable {
         /// Instantaneous input level in dBFS, for the menu bar meter.
         case level(Double)
+        /// The audio engine is running: speech from here on is captured.
+        case started
     }
 
     private let config: RecordingConfig
@@ -159,6 +161,7 @@ public final class AudioCapture: NSObject {
         do {
             engine.prepare()
             try engine.start()
+            onEvent?(.started)
         } catch {
             inputNode.removeTap(onBus: 0)
             state.end()
